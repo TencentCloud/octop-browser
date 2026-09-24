@@ -1,10 +1,10 @@
 ---
 name: publish
 description: >-
-  Publish the octop-browser Python package: cut a release branch from main, bump
-  version, update CHANGELOG, open a PR to main; after merge, Actions auto-tag
-  on main and publish to PyPI + GitHub Release. Use when the user asks to
-  publish, release, bump version, cut a release, or run /publish.
+  Publish the octop-browser Python package: cut a release branch from develop, bump
+  version, update CHANGELOG / README, open a PR to main; after merge, Actions
+  tag on main (PyPI + GitHub Release) and sync main into develop. Use when the
+  user asks to publish, release, bump version, cut a release, or run /publish.
 disable-model-invocation: true
 ---
 
@@ -23,13 +23,15 @@ disable-model-invocation: true
 | `CHANGELOG_FILE` | `CHANGELOG.md` | 相对于仓库根目录的路径，文件不存在则跳过 |
 | `VERSION_FILE` | `pyproject.toml` | 包含版本号的文件 |
 | `VERSION_PATTERN` | `^\s*version\s*=\s*"[^"]+"` | 匹配版本行的正则表达式 |
-| `README_FILE` | `README.md` | 含 shields.io 版本徽标的文件（badge 版本号同步升级） |
-| `TAG_PREFIX` | `v` | Git tag 前缀；工作流监听 `v*`，生成 `v0.1.14` 风格标签 |
-| `REMOTE` | `origin` | Git 远程仓库名 |
-| `INTEGRATION_BRANCH` | `main` | 日常集成分支；release 必须从最新 tip 切出 |
-| `PYPI_PACKAGE` | `octop-browser` | PyPI 包名（仅用于提示文案） |
+| `README_FILE` | `README.md` | 发版时同步检查/更新的 README（见步骤 4b） |
+| `README_CN_FILE` | `README_CN.md` | 若存在则同样同步；缺失则跳过 |
+| `INIT_VERSION_FILE` | `(none — package metadata)` | 含硬编码 `__version__` 时同步；本包通常由 `importlib.metadata` 读取，缺失/元数据驱动则跳过 |
+| `TAG_PREFIX` | `v` | Git tag 前缀；工作流监听 `v*` |
+| `REMOTE` | `origin` | Git 远程仓库名（推送 release 分支与创建 PR） |
+| `INTEGRATION_BRANCH` | `develop` | 日常集成分支；release 必须从最新 tip 切出 |
 | `TARGET_BRANCH` | `main` | 合并请求的目标分支（生产真源） |
 | `RELEASE_BRANCH_PREFIX` | `release/` | release 分支名前缀 |
+| `PYPI_PACKAGE` | `octop-browser` | PyPI 包名（仅用于提示文案） |
 
 ## 调用方式
 
@@ -43,7 +45,8 @@ disable-model-invocation: true
 
 > **顺序硬约束：** 先 PR 合入 `main`，再在 **main tip** 打并推送 `v*` tag。  
 > **禁止**在 release 分支未合入 `main` 前推送生产 tag。  
-> **禁止**在本地直接 `twine upload` / `make publish` — 发布由 GitHub Action 负责。
+> **禁止**在本地直接 `twine upload` / `make publish` — 公开发布由 GitHub Action 负责。  
+> **禁止**将 `develop` 直接 push / merge 进 `main`。
 
 ### 步骤 1 — 读取配置并确认版本
 
@@ -67,20 +70,21 @@ disable-model-invocation: true
 7. 展示确认信息：
 
 ```
-当前版本 (pyproject.toml @ main): X.Y.Z
+当前版本 (pyproject.toml @ develop): X.Y.Z
 目标版本:                           A.B.C
 上次发布 tag:                       vX.Y.Z (YYYY-MM-DD)
 Release 分支:                       release/A.B.C
-集成起点:                           main
+集成起点:                           develop
 合入目标:                           main
 Tag 时机:                           main 合并之后（不会在 release 上先打 tag）
+PyPI 包:                            octop-browser
 
 确认发布 X.Y.Z → A.B.C？[y/N]
 ```
 
 如果用户未输入 `y` 确认，立即中止。
 
-### 步骤 2 — 从 main 创建 release 分支
+### 步骤 2 — 从 develop 创建 release 分支
 
 ```bash
 git checkout -B {RELEASE_BRANCH_PREFIX}{version} {REMOTE}/{INTEGRATION_BRANCH}
@@ -94,7 +98,7 @@ git checkout -B {RELEASE_BRANCH_PREFIX}{version} {REMOTE}/{INTEGRATION_BRANCH}
 
 ### 步骤 3 — 分析变更并生成 CHANGELOG 草稿
 
-1. 获取上次 tag 以来的提交（相对当前 release HEAD，即 main tip）：
+1. 获取上次 tag 以来的提交（相对当前 release HEAD，即 develop tip）：
    ```bash
    git log {last_tag}..HEAD --oneline
    # 首次发布时：
@@ -176,22 +180,21 @@ git checkout -B {RELEASE_BRANCH_PREFIX}{version} {REMOTE}/{INTEGRATION_BRANCH}
 
 如果 `## [Unreleased]` 标题不存在，在 `# Changelog` 标题行之后插入新条目（若无标题则插入到文件顶部）。
 
-**4b. 升级版本号（同步所有版本来源）：**
+**4b. 升级版本号并同步 README：**
 
-发布版本号必须保持多文件一致。依次升级以下位置：
+发布版本号必须保持多文件一致。依次处理：
 
 1. `VERSION_FILE`（`pyproject.toml`）— wheel / PyPI 的唯一版本源：
    ```bash
    grep -n '^\s*version\s*=\s*"[^"]+"' pyproject.toml
    # 用 Edit 工具将该行的 "X.Y.Z" 替换为 "A.B.C"
    ```
-2. `README_FILE`（`README.md`）— shields.io 版本徽标：
-   ```bash
-   grep -n 'shields.io/badge/version-' README.md
-   # 用 Edit 工具将 `version-X.Y.Z-orange` 替换为 `version-A.B.C-orange`
-   ```
-   文件不存在则跳过并提示（不中止）。
-运行时 `__version__` 若通过 `importlib.metadata` 读取已安装包元数据，则无需改 `__init__.py`。
+2. `README_FILE` / `README_CN_FILE`（若存在）：
+   - 若存在静态 shields 徽标 `version-X.Y.Z-orange`（或同类），升级为 `version-A.B.C-orange`。
+   - 若仅使用动态 `shields.io/pypi/v/octop-browser` 徽标，**无需改徽标**（PyPI 发布后自动更新），但仍须检查 README 中是否有硬编码安装示例版本（如 `pip install octop-browser==X.Y.Z`）并同步。
+   - 用户可见的发版说明若写在 README，按需补一行指向 `CHANGELOG.md` 对应版本。
+   - 文件不存在则跳过并提示（不中止）。
+3. `INIT_VERSION_FILE` — 仅当文件内存在硬编码 `__version__ = "..."` 时升级；若通过 `importlib.metadata` / `_version.py` 读包元数据则跳过。
 
 **4c. 提交：**
 
@@ -215,10 +218,11 @@ git push -u {REMOTE} {RELEASE_BRANCH_PREFIX}{version}
 
 ### 步骤 5 — 创建合入 main 的 Pull Request（先合，后自动 tag）
 
-使用 `gh` CLI：
+使用 `gh` CLI（`--repo` 指向 GitHub 上的本仓）：
 
 ```bash
 gh pr create \
+  --repo TencentCloud/octop-browser \
   --base {TARGET_BRANCH} \
   --head {RELEASE_BRANCH_PREFIX}{version} \
   --title "chore: release {version}" \
@@ -227,36 +231,18 @@ gh pr create \
 
 ## Release checklist
 - [ ] CI green
-- [ ] Merge this PR into main
+- [ ] Merge this PR into main with a **merge commit** (not squash)
 - [ ] After merge, GitHub Action auto-pushes v{version} tag on main tip
-- [ ] Release workflow publishes octop-browser to PyPI
+- [ ] Release workflow publishes octop-browser to PyPI and syncs main → develop
 EOF
 )"
 ```
 
-若 remote 为 `git.woa.com`（工蜂），改用 API 创建合并请求：
-
-```bash
-# project 例：orcakit/octop-browser（gateway 仓库路径可能为 orcakit/harness-im-bridge）
-proj=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$(git remote get-url origin | sed -E 's|.*[:/](.+/.+)\.git$|\1|')")
-curl -sS -X POST \
-  -H "PRIVATE-TOKEN: ${WALLY_GONGFENG_PRIVATE_KEY:?missing token}" \
-  -H "Content-Type: application/json" \
-  "https://git.woa.com/api/v3/projects/${proj}/merge_requests" \
-  -d @- <<EOF
-{
-  "source_branch": "{RELEASE_BRANCH_PREFIX}{version}",
-  "target_branch": "{TARGET_BRANCH}",
-  "title": "chore: release {version}",
-  "description": "<步骤 3 CHANGELOG + Release checklist>"
-}
-EOF
-```
-
-- 成功时展示 PR/MR URL，并明确告知：
+- 成功时展示 PR URL，并明确告知：
   - 合并前不要手动打 tag；
-  - 合并后会自动发版（自动打 tag → PyPI）。
-- 若创建失败：中止（此时尚未发版），提示手动创建：
+  - 合并请用 **merge commit**；
+  - 合并后会自动发版（自动打 tag → PyPI → sync develop）。
+- 若 `gh` 失败：中止（此时尚未发版），提示手动创建 PR：
   `{RELEASE_BRANCH_PREFIX}{version}` → `{TARGET_BRANCH}`
 
 ### 步骤 6 — 等待合入后，由 Action 在 main tip 打 tag
@@ -269,14 +255,15 @@ EOF
 
 2. 合并后：
    - `auto-tag-on-release.yml` 会读取合并后 `main` 的 `pyproject.toml` 版本并推送 `{TAG_PREFIX}{version}`。
-   - 随后 dispatch `release.yml`：构建 → PyPI → GitHub Release。
+   - 随后 dispatch `release.yml`：构建 → PyPI → GitHub Release → `sync-main-to-develop.yml`。
    - 若 tag 已存在，Action 会跳过并输出日志。
 
 3. 提示用户到 Actions 确认：
    - `Auto Tag On Release Merge` 成功；
-   - `Release` 随 `v*` tag / dispatch 通过。
+   - `Release` 随 `v*` tag / dispatch 通过；
+   - `Sync Main Into Develop` 在 GitHub Release 发布后把 `main` 同步回 `develop`。
 
-### 步骤 7 — 删除 release 分支
+### 步骤 7 — 删除 release 分支；develop 由 Action 同步
 
 1. 删除远程与本地 release 分支：
    ```bash
@@ -284,6 +271,10 @@ EOF
    git branch -D {RELEASE_BRANCH_PREFIX}{version}
    ```
    删除失败则警告（非致命），提示手动删除。
+
+2. **develop 同步**：GitHub Release 发布成功后，`sync-main-to-develop.yml` 会自动把 `main` 合入 `develop`（保护/冲突时开 `chore/sync-develop-after-*` PR，尽量 merge auto-merge）。
+   - 若已快进无差异，Action 会跳过。
+   - 技能侧无需再手动创建 sync PR（除非 Action 失败）。
 
 ### 步骤 8 — 切回原分支
 
@@ -308,23 +299,26 @@ git checkout {original_branch}
 | 步骤 6 在未合入时手动打 tag | **禁止** — 硬红线 |
 | 步骤 6 tag 已存在 | Action 跳过；提示检查是否已发布 |
 | 步骤 6 tag 推送成功但 Action 失败 | 非致命：提示到 Actions Re-run |
-| 步骤 7 删分支失败 | 警告并给出手动命令 |
+| 步骤 7 删分支或 sync 失败 | 警告并给出手动命令 |
 
 ## 红线规则
 
 **绝不：**
 - 在 release / feature 分支上、于合入 `main` **之前**推送生产 `v*` tag
 - 在推送 tag 前直接上传 PyPI（发布由 GitHub Action 负责）
+- 将 `develop` 直接 push / merge 进 `main`（必须走 `release/*` PR）
+- 直接 push 到受保护的 `main` / `develop`
 - 跳过步骤 1 的用户确认
 - 跳过步骤 3 的 CHANGELOG 确认
-- 在任何步骤失败后继续执行（步骤 7 的清理警告除外）
+- 在任何步骤失败后继续执行（步骤 7 的清理/同步警告除外）
 - 流程结束后让用户留在 release 分支
 - 保留已发完的 `release/*` 作为长期分支
 
 **始终：**
 - 从最新 `{REMOTE}/{INTEGRATION_BRANCH}` 切 release
 - 先合入 `{TARGET_BRANCH}`，再由 Action 在 main tip 打 tag
-- 发版后删除 `release/*`
+- 发版时同步更新 CHANGELOG，并检查/更新 README（及 README_CN）
+- 发版后删除 `release/*`；`main → develop` 由 `sync-main-to-develop.yml` 自动同步（失败时再手动补）
 - 中止前展示完整错误输出
 - 插入新版本条目后保持 `[Unreleased]` 为空
 - 推送 tag 后提示用户关注 GitHub Actions 的发布结果
