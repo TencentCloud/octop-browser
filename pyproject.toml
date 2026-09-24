@@ -2,7 +2,7 @@
 # hatchling>=1.30 defaults to Core Metadata 2.5; released twine / PyPI still
 # reject that until warehouse + twine catch up. Cap the version, and keep an
 # explicit 2.4 override so a newer hatchling cannot silently reintroduce 2.5.
-requires = ["hatchling>=1.25,<1.30"]
+requires = ["hatchling>=1.25,<1.33"]
 build-backend = "hatchling.build"
 
 [project]
@@ -27,7 +27,7 @@ dependencies = [
     "aiohttp>=3.9",
     # mcp 2.x removed the low-level Server.list_tools()/call_tool() decorators
     # that mcp_server.py registers at import time, so the <2 ceiling is required.
-    "mcp>=1.9,<2",
+    "mcp>=1.9,<3",
 ]
 
 [project.optional-dependencies]
