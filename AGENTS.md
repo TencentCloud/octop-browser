@@ -14,7 +14,7 @@ make typecheck # mypy strict on src/
 make test      # full suite with coverage (uv run pytest --cov=octop_browser)
 make build     # uv build → wheel + sdist
 make mcp       # launch the MCP stdio server (python -m octop_browser.mcp_server)
-make publish   # uv publish (PyPI release)
+make publish   # local uv publish (prefer /publish skill + Actions; do not use for public releases)
 make clean     # remove dist/, .coverage, .mypy_cache/, .ruff_cache/
 ```
 
@@ -126,3 +126,14 @@ Live at `.codebuddy/skills/octop-browser/SKILL.md` (English) and `.codebuddy/ski
 - **No Playwright, no Selenium**: the dependency story is just `websockets`, `aiohttp`, `pydantic`, `mcp`. Don't add browser drivers.
 - **`localhost` is never hardcoded** — always go through `cfg.cdp_host`. A dedicated regression hazard if you forget.
 - **Repository URL** in docs is `https://github.com/TencentCloud/octop-browser.git`.
+
+## Branching & release
+
+Follow Octop-style flow documented in `CONTRIBUTING.md`:
+
+```
+feature/* ──PR──► develop ──► release/x.y.z ──PR──► main ──tag v*──► publish
+```
+
+Agent publish: `.cursor/skills/publish` (`/publish <version>`). Never push directly to `main`/`develop`.
+

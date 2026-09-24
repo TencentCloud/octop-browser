@@ -7,6 +7,11 @@
 
 ## [Unreleased]
 
+### 变更
+
+- 对齐 Octop：引入 `develop` 集成分支策略；禁止直推 `main`/`develop`；发版后由 `sync-main-to-develop.yml` 同步；新增 `/publish` skill（发版同步 CHANGELOG / README）。
+
+
 ## [1.0.0] - 2026-09-24
 
 `octop-browser` 的首个正式版本：一个面向 Agent 的浏览器自动化工具，直连
