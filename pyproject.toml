@@ -27,7 +27,7 @@ dependencies = [
     "aiohttp>=3.9",
     # mcp 2.x removed the low-level Server.list_tools()/call_tool() decorators
     # that mcp_server.py registers at import time, so the <2 ceiling is required.
-    "mcp>=1.9,<2",
+    "mcp>=1.9,<3",
 ]
 
 [project.optional-dependencies]
