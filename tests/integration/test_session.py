@@ -11,7 +11,12 @@ from octop_browser.session import BrowserSession
 @pytest.fixture()
 async def sess(tmp_path: Path):
     pm = ProfileManager(base_dir=tmp_path / "profiles")
-    s = await BrowserSession.create(profile="test", headless=True, profile_manager=pm)
+    try:
+        s = await BrowserSession.create(profile="test", headless=True, profile_manager=pm)
+    except RuntimeError as exc:
+        if "Chrome" in str(exc) or "Chromium" in str(exc):
+            pytest.skip(f"Chrome/Chromium unavailable for integration: {exc}")
+        raise
     yield s
     await s.close()
 
