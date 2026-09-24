@@ -50,12 +50,19 @@ async def test_record_replay_local_form_end_to_end(tmp_path: Path):
     store = RecordingStore(RecordReplaySettings(base_dir=tmp_path / "rr"))
 
     recorder_session = None
-    sess = await BrowserSession.create(
-        profile="record-e2e",
-        headless=True,
-        profile_manager=profile_manager,
-        settings=settings,
-    )
+    try:
+        sess = await BrowserSession.create(
+            profile="record-e2e",
+            headless=True,
+            profile_manager=profile_manager,
+            settings=settings,
+        )
+    except RuntimeError as exc:
+        # CI runners sometimes ship a non-functional chromium-browser stub;
+        # treat unusable Chrome the same as "not installed".
+        if "Chrome" in str(exc) or "Chromium" in str(exc):
+            pytest.skip(f"Chrome/Chromium unavailable for integration: {exc}")
+        raise
     try:
         await sess.navigate(url)
         # Inject the same settings/profile manager the session was built with,
