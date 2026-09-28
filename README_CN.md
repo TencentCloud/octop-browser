@@ -174,9 +174,15 @@ await browser_tool(action="navigate", url="https://example.com", profile="work")
 ### 3. 作为 CLI 使用
 
 ```bash
+octop-browser --help
+octop-browser --version
 octop-browser navigate "https://example.com" --profile work
 octop-browser dom-tree --profile work
+octop-browser dom-tree --help
 ```
+
+顶层帮助会列出所有命令和常用示例。每个命令也有独立帮助页，包含录制等
+嵌套命令，例如 `octop-browser record start --help`。
 
 ### 4. 录制一段流程
 
@@ -207,6 +213,9 @@ octop-browser replay run <recording_id>              # 回放
   - [许可证](#-许可证)
 
 ## 📖 CLI 参考
+
+使用 `octop-browser --help` 查看完整命令列表，使用
+`octop-browser <command> --help` 查看具体参数。`--version` 会打印已安装包的版本。
 
 | 命令 | 说明 |
 |------|------|

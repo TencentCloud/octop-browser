@@ -26,6 +26,7 @@ import json
 import logging
 import sys
 from collections.abc import Sequence
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
 from octop_browser.install import chromium_executable, ensure_chromium
@@ -41,6 +42,14 @@ from octop_browser.tool_interface import browser_tool
 # ---------------------------------------------------------------------------
 # Subparser builders
 # ---------------------------------------------------------------------------
+
+
+def _package_version() -> str:
+    """Return the installed package version for ``--version`` output."""
+    try:
+        return version("octop-browser")
+    except PackageNotFoundError:
+        return "unknown"
 
 
 def _add_common_args(p: argparse.ArgumentParser) -> None:
@@ -87,16 +96,39 @@ def _add_mode_args(p: argparse.ArgumentParser) -> None:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="octop-browser",
-        description="octop-browser CLI — drive a CDP browser from the shell.",
+        description=(
+            "octop-browser CLI — drive a CDP browser from the shell.\n"
+            "Run '<command> --help' for command-specific options."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  octop-browser navigate https://example.com --profile work\n"
+            "  octop-browser dom-tree --level interactive --profile work\n"
+            "  octop-browser record start --privacy mask-sensitive"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    sub = parser.add_subparsers(dest="command", required=True, metavar="<command>")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version="%(prog)s " + _package_version(),
+        help="Show the installed version and exit.",
+    )
+    sub = parser.add_subparsers(
+        dest="command",
+        required=True,
+        metavar="<command>",
+        title="commands",
+    )
 
     # -- install-browser ----------------------------------------------------
     install = sub.add_parser(
         "install-browser",
-        help="Download Playwright Chromium into the standard cache.",
+        help="Install the managed Chromium binary used by the CDP launcher.",
         description=(
-            "Install a Chromium binary that octop-browser can launch. "
+            "Install the managed Chromium binary that octop-browser can launch. "
+            "Playwright may be bootstrapped as a one-time downloader, but it "
+            "is not used to drive the browser. "
             "Idempotent: if a binary is already present, prints its path "
             "and exits 0 without re-downloading."
         ),

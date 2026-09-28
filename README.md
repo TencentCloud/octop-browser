@@ -176,9 +176,16 @@ await browser_tool(action="navigate", url="https://example.com", profile="work")
 ### 3. Use as a CLI
 
 ```bash
+octop-browser --help
+octop-browser --version
 octop-browser navigate "https://example.com" --profile work
 octop-browser dom-tree --profile work
+octop-browser dom-tree --help
 ```
+
+The top-level help lists every command and common examples. Every command also
+has its own help page, including nested commands such as
+`octop-browser record start --help`.
 
 ### 4. Record a workflow
 
@@ -209,6 +216,10 @@ octop-browser replay run <recording_id>              # replay it
   - [License](#-license)
 
 ## 📖 CLI reference
+
+Use `octop-browser --help` for the complete command list and
+`octop-browser <command> --help` for command-specific options. The
+`--version` flag prints the installed package version.
 
 | Command | Description |
 |---------|-------------|
