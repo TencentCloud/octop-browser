@@ -135,4 +135,4 @@ the shell cleanly.
 
 ## Repository
 
-https://git.woa.com/orcakit/browser-use.git
+https://github.com/TencentCloud/octop-browser

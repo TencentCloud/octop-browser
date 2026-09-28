@@ -364,7 +364,7 @@ make all              # format + lint + typecheck + test
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
 3. Run `make all` before submitting
-4. Open a Pull Request against `main`
+4. Open a Pull Request against `develop`
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for branching, PR, and release details (`release/*` → `main` auto-publishes to PyPI).
 

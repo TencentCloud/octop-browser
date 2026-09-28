@@ -115,12 +115,12 @@ _fire("before_action", {...}) → action body → _record(result)
 
 ### Skill files (Claude Code / agent-facing)
 
-Live at `.codebuddy/skills/octop-browser/SKILL.md` (English) and `.codebuddy/skills/octop-browser-zh/SKILL.md` (Chinese). They use the standard YAML-frontmatter format (`name`, `description`, `allowed-tools`) and are designed to be `cp -r`'d into other agent projects. Keep these in sync when the public surface (env vars, modes, action list) changes.
+Live at `skills/octop-browser/SKILL.md` (English) and `skills/octop-browser-zh/SKILL.md` (Chinese). They use the standard YAML-frontmatter format (`name`, `description`, `allowed-tools`) and are designed to be `cp -r`'d into other agent projects. Keep these in sync when the public surface (env vars, modes, action list) changes.
 
 ## Project conventions
 
 - **Commit gate**: `make install-hooks` once per clone; `make all` must be green before every commit (the hook enforces it). See [Commands](#commands).
-- **Docs language**: README is bilingual (`README.md` canonical English + `README.zh.md`); `CHANGELOG.md` and `CONTRIBUTING.md` are Chinese-only by deliberate choice.
+- **Docs language**: README is bilingual (`README.md` canonical English + `README_CN.md`); `CHANGELOG.md` and `CONTRIBUTING.md` are Chinese-only by deliberate choice.
 - **ruff**: `line-length = 88`, lint selects `E F I N W`. Do not raise the line length to dodge wraps.
 - **mypy**: `strict = true`, `python_version = "3.11"`. New code must type-check under strict mode; reach for `from __future__ import annotations` (already used everywhere) before adding `# type: ignore`.
 - **No Playwright, no Selenium**: the dependency story is just `websockets`, `aiohttp`, `pydantic`, `mcp`. Don't add browser drivers.
