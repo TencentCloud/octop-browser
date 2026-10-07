@@ -58,6 +58,81 @@ def test_ensure_xdg_runtime_dir_noop_on_non_linux(
 
 
 @linux_only
+def test_ensure_xdg_runtime_dir_keeps_usable_runtime_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An already usable $XDG_RUNTIME_DIR must be kept, not relocated.
+
+    Wayland clients (Chromium included) resolve their compositor socket as
+    ``$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY``. Relocating the variable to ``/tmp``
+    hides ``wayland-0`` and makes Chrome abort with "Failed to connect to
+    Wayland display: No such file or directory (2)" instead of starting —
+    and unlike GTK/Qt, Chromium does not fall back to X11 when that happens.
+    """
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    (runtime / "wayland-0").write_text("")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+    monkeypatch.setenv("DISPLAY", ":0")
+    env: dict[str, str] = {}
+
+    path = ensure_xdg_runtime_dir(env)
+
+    assert path == runtime
+    # A live session keeps its Wayland hint.
+    assert os.environ["WAYLAND_DISPLAY"] == "wayland-0"
+
+
+@linux_only
+def test_ensure_xdg_runtime_dir_drops_stale_wayland_hint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A WAYLAND_DISPLAY without a socket must not force the Wayland backend."""
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-gone")
+    monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+    monkeypatch.setenv("DISPLAY", ":0")
+
+    path = ensure_xdg_runtime_dir()
+
+    assert path == runtime
+    assert "WAYLAND_DISPLAY" not in os.environ
+    assert "XDG_SESSION_TYPE" not in os.environ
+
+
+@linux_only
+def test_ensure_xdg_runtime_dir_drops_wayland_hint_after_relocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Relocating the runtime dir invalidates the compositor socket path.
+
+    The stale hint must be dropped from the child ``env`` too — that mapping is
+    what gets handed to ``Popen``, so cleaning only ``os.environ`` is not
+    enough.
+    """
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "missing"))
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+    monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+    env: dict[str, str] = {
+        "XDG_RUNTIME_DIR": str(tmp_path / "missing"),
+        "WAYLAND_DISPLAY": "wayland-0",
+        "XDG_SESSION_TYPE": "wayland",
+    }
+
+    path = ensure_xdg_runtime_dir(env)
+
+    assert path == _runtime_dir_for_uid()
+    assert env["XDG_RUNTIME_DIR"] == str(path)
+    assert "WAYLAND_DISPLAY" not in env
+    assert "XDG_SESSION_TYPE" not in env
+    assert "WAYLAND_DISPLAY" not in os.environ
+    assert "XDG_SESSION_TYPE" not in os.environ
+
+
+@linux_only
 def test_ensure_profile_writable_relocates_root_home(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -80,7 +155,12 @@ def test_ensure_profile_writable_relocates_root_home(
 
 
 @linux_only
-def test_prepare_chrome_launch_injects_xdg(tmp_path: Path) -> None:
+def test_prepare_chrome_launch_injects_xdg(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An unusable runtime dir is the case the /tmp fallback exists for
+    # (containers / root hosts); a usable one is now kept instead.
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "missing-runtime"))
     data = tmp_path / "default"
     data.mkdir()
     profile = Profile(name="default", data_dir=data, cdp_port=9333)
@@ -89,6 +169,26 @@ def test_prepare_chrome_launch_injects_xdg(tmp_path: Path) -> None:
     assert env["XDG_RUNTIME_DIR"].startswith("/tmp/runtime-octop-browser-")
     assert updated.data_dir.exists()
     assert env["BROWSER_USE_PROFILES_DIR"] == str(updated.data_dir.parent)
+
+
+@linux_only
+def test_prepare_chrome_launch_keeps_usable_xdg_for_wayland(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The child env must keep the real runtime dir so Wayland stays reachable."""
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    (runtime / "wayland-0").write_text("")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+    data = tmp_path / "default"
+    data.mkdir()
+    profile = Profile(name="default", data_dir=data, cdp_port=9334)
+
+    _, env = prepare_chrome_launch(profile)
+
+    assert env["XDG_RUNTIME_DIR"] == str(runtime)
+    assert env["WAYLAND_DISPLAY"] == "wayland-0"
 
 
 @linux_only
