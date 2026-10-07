@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### 修复
+
+- Wayland 桌面（GNOME/KDE）上启动 Chrome 失败：`ensure_xdg_runtime_dir` 无条件把 `XDG_RUNTIME_DIR` 改写到 `/tmp`，而 Wayland 客户端按 `$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY` 解析合成器 socket，Chrome 因此报 `Failed to connect to Wayland display: No such file or directory (2)` 并立即退出（`Chrome exited immediately (returncode=1)`）；Chromium 不像 GTK/Qt 那样回退 X11，所以即使 `DISPLAY` 可用也必然失败。现改为：`$XDG_RUNTIME_DIR` 已可用时保留，仅在确实缺失/不可写（容器、root）时回退 `/tmp`；并清理指向不存在 socket 的 `WAYLAND_DISPLAY` / `XDG_SESSION_TYPE`，让 Chromium 回落 X11 而不是直接退出。
+
 ### 变更
 
 - 对齐 Octop：引入 `develop` 集成分支策略；禁止直推 `main`/`develop`；发版后由 `sync-main-to-develop.yml` 同步；新增 `/publish` skill（发版同步 CHANGELOG / README）。

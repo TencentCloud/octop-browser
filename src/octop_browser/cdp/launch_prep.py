@@ -60,15 +60,98 @@ def _runtime_dir_for_uid(uid: int | None = None) -> Path:
     return Path(tempfile.gettempdir()) / f"runtime-octop-browser-{token}"
 
 
+def _current_runtime_dir_usable() -> bool:
+    """True when ``$XDG_RUNTIME_DIR`` is a writable dir owned by this uid."""
+    raw = (os.environ.get("XDG_RUNTIME_DIR") or "").strip()
+    if not raw:
+        return False
+    path = Path(raw)
+    try:
+        st = path.stat()
+    except OSError:
+        return False
+    if not path.is_dir():
+        return False
+    getuid = getattr(os, "getuid", None)
+    if callable(getuid) and st.st_uid != getuid():
+        return False
+    return os.access(path, os.W_OK | os.X_OK)
+
+
+def _wayland_socket_available() -> bool:
+    """True when ``$WAYLAND_DISPLAY`` resolves to an existing path.
+
+    Returns False when ``WAYLAND_DISPLAY`` is unset or empty.
+    """
+    wayland_display = (os.environ.get("WAYLAND_DISPLAY") or "").strip()
+    if not wayland_display:
+        return False
+    if os.path.isabs(wayland_display):
+        socket_path = Path(wayland_display)
+    else:
+        runtime_dir = (os.environ.get("XDG_RUNTIME_DIR") or "").strip()
+        if not runtime_dir:
+            return False
+        socket_path = Path(runtime_dir) / wayland_display
+    return socket_path.exists()
+
+
+def drop_unusable_wayland_hint(env: dict[str, str] | None = None) -> bool:
+    """Clear stale Wayland hints from *env* (and ``os.environ``); True if dropped.
+
+    Chromium picks its Ozone backend from ``XDG_SESSION_TYPE`` /
+    ``WAYLAND_DISPLAY`` and, unlike GTK/Qt, does **not** fall back to X11 when
+    the Wayland platform fails to initialize — it exits immediately:
+
+        Failed to connect to Wayland display: No such file or directory (2)
+        Failed to initialize Wayland platform
+        The platform failed to initialize.  Exiting.
+
+    A ``WAYLAND_DISPLAY`` pointing at a socket that does not exist (stale
+    session, or a runtime dir this helper had to relocate) must therefore not
+    force the Wayland backend: dropping both hints lets Chromium use
+    ``DISPLAY`` again. Both must go — Chromium also reads the session type.
+    """
+    if not (os.environ.get("WAYLAND_DISPLAY") or "").strip():
+        return False
+    if _wayland_socket_available():
+        return False
+    logger.info(
+        "Dropping stale Wayland hints (WAYLAND_DISPLAY=%r, no socket under "
+        "XDG_RUNTIME_DIR=%r); Chromium will fall back to X11",
+        os.environ.get("WAYLAND_DISPLAY"),
+        os.environ.get("XDG_RUNTIME_DIR"),
+    )
+    targets = [os.environ] if env is None else [os.environ, env]
+    for target in targets:
+        target.pop("WAYLAND_DISPLAY", None)
+        target.pop("XDG_SESSION_TYPE", None)
+    return True
+
+
 def ensure_xdg_runtime_dir(env: dict[str, str] | None = None) -> Path | None:
-    """Force a writable ``XDG_RUNTIME_DIR`` into *env* (and ``os.environ``).
+    """Ensure a writable ``XDG_RUNTIME_DIR`` in *env* (and ``os.environ``).
 
     Linux-only: Chrome on Windows/macOS does not rely on ``XDG_RUNTIME_DIR``.
     Returns ``None`` on non-Linux.
+
+    An already usable ``$XDG_RUNTIME_DIR`` is **kept**: Wayland clients resolve
+    their compositor socket as ``$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY``, so
+    relocating the variable to ``/tmp`` hides ``wayland-0`` and makes Chromium
+    abort with "Failed to connect to Wayland display: No such file or
+    directory" even though ``DISPLAY`` is perfectly usable.
     """
     if not _is_linux():
         return None
     target = env if env is not None else os.environ
+    if _current_runtime_dir_usable():
+        drop_unusable_wayland_hint(env)
+        # Keep the usable dir, but make sure the child env carries it: a fresh
+        # ``env`` mapping built by the caller may not have it yet.
+        usable = os.environ["XDG_RUNTIME_DIR"]
+        target.setdefault("XDG_RUNTIME_DIR", usable)
+        return Path(usable)
+
     path = _runtime_dir_for_uid()
     path.mkdir(parents=True, exist_ok=True)
     with contextlib.suppress(OSError):
@@ -76,6 +159,11 @@ def ensure_xdg_runtime_dir(env: dict[str, str] | None = None) -> Path | None:
     target["XDG_RUNTIME_DIR"] = str(path)
     if env is not None:
         os.environ["XDG_RUNTIME_DIR"] = str(path)
+    # A relocated runtime dir can no longer resolve the compositor socket, so
+    # a leftover WAYLAND_DISPLAY would point Chromium at a nonexistent path.
+    drop_unusable_wayland_hint(env)
+    target.pop("WAYLAND_DISPLAY", None)
+    target.pop("XDG_SESSION_TYPE", None)
     return path
 
 
