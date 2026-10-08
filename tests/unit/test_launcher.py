@@ -211,6 +211,63 @@ def test_find_playwright_chromium_falls_back_to_old_layout(monkeypatch, tmp_path
 
 
 # ---------------------------------------------------------------------------
+# Linux arm64 (unofficial fallback build) layout
+# ---------------------------------------------------------------------------
+
+
+def test_playwright_exe_candidates_linux_includes_arm64_layout(monkeypatch, tmp_path):
+    """Linux probes chrome-linux-arm64/ — where Playwright's arm64 build lives.
+
+    Playwright has no official Linux arm64 Chromium, so it downloads an
+    unofficial fallback build ("downloading fallback build for
+    ubuntu24.04-arm64") whose per-platform directory is ``chrome-linux-arm64``
+    rather than ``chrome-linux64``.
+    """
+    from octop_browser.cdp.launcher import _playwright_exe_candidates
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    candidates = _playwright_exe_candidates(tmp_path)
+
+    expected = tmp_path / "chrome-linux-arm64" / "chrome"
+    assert expected in candidates
+    assert candidates.index(tmp_path / "chrome-linux64" / "chrome") < (
+        candidates.index(expected)
+    )
+    assert candidates.index(expected) < candidates.index(
+        tmp_path / "chrome-linux" / "chrome"
+    )
+
+
+def test_playwright_exe_candidates_globs_unknown_linux_layout(monkeypatch, tmp_path):
+    """A layout this module does not know by name is still discovered."""
+    from octop_browser.cdp.launcher import _playwright_exe_candidates
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    (tmp_path / "chrome-linux-riscv64").mkdir()
+    candidates = _playwright_exe_candidates(tmp_path)
+
+    assert tmp_path / "chrome-linux-riscv64" / "chrome" in candidates
+
+
+@pytest.mark.skipif(
+    sys.platform.startswith("win") or sys.platform == "darwin",
+    reason="Linux-only layout; Windows/macOS have their own branches.",
+)
+def test_find_playwright_chromium_linux_arm64_layout(monkeypatch, tmp_path):
+    """The arm64 fallback build must be resolvable, not just enumerated."""
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
+    arm64_dir = tmp_path / "chromium-1243" / "chrome-linux-arm64"
+    arm64_dir.mkdir(parents=True)
+    binary = arm64_dir / "chrome"
+    binary.write_text("#!/bin/sh\nexit 0\n")
+    binary.chmod(0o755)
+
+    found = _find_playwright_chromium()
+    assert found is not None
+    assert Path(found) == binary
+
+
+# ---------------------------------------------------------------------------
 # --no-sandbox auto-detection
 # ---------------------------------------------------------------------------
 

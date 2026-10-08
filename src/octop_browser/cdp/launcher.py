@@ -48,6 +48,31 @@ _CHROME_SUFFIXES_WIN = [
 _CLONE_NEWUSER = 0x10000000
 
 
+def _extend_with_globbed_layouts(
+    known: list[Path],
+    cdir: Path,
+    pattern: str,
+    exe_relative: Path,
+) -> list[Path]:
+    """Append ``cdir/<layout>/<exe_relative>`` for layouts not already in *known*.
+
+    Playwright derives the per-platform directory from the *build* it
+    downloaded, so new architectures introduce layouts this module cannot
+    hard-code ahead of time — e.g. Chromium's unofficial Linux arm64 build
+    ("your OS is not officially supported … downloading fallback build for
+    ubuntu24.04-arm64") lands in ``chrome-linux-arm64/`` rather than
+    ``chrome-linux64/``. Globbing keeps the explicit preferred order while
+    still finding any future layout name.
+    """
+    seen = {path for path in known}
+    for layout_dir in sorted(p for p in cdir.glob(pattern) if p.is_dir()):
+        candidate = layout_dir / exe_relative
+        if candidate not in seen:
+            known.append(candidate)
+            seen.add(candidate)
+    return known
+
+
 def _playwright_exe_candidates(cdir: Path) -> list[Path]:
     """Return the binary locations Playwright has used inside ``chromium-<rev>/``.
 
@@ -63,22 +88,38 @@ def _playwright_exe_candidates(cdir: Path) -> list[Path]:
             "MacOS",
             "Google Chrome for Testing",
         )
-        return [
-            cdir.joinpath("chrome-mac-arm64", *cft),
-            cdir.joinpath("chrome-mac-x64", *cft),
-            cdir.joinpath(
-                "chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium"
-            ),
-        ]
+        return _extend_with_globbed_layouts(
+            [
+                cdir.joinpath("chrome-mac-arm64", *cft),
+                cdir.joinpath("chrome-mac-x64", *cft),
+                cdir.joinpath(
+                    "chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium"
+                ),
+            ],
+            cdir,
+            "chrome-mac*",
+            Path(*cft),
+        )
     if sys.platform.startswith("win"):
-        return [
-            cdir / "chrome-win64" / "chrome.exe",
-            cdir / "chrome-win" / "chrome.exe",
-        ]
-    return [
-        cdir / "chrome-linux64" / "chrome",
-        cdir / "chrome-linux" / "chrome",
-    ]
+        return _extend_with_globbed_layouts(
+            [
+                cdir / "chrome-win64" / "chrome.exe",
+                cdir / "chrome-win" / "chrome.exe",
+            ],
+            cdir,
+            "chrome-win*",
+            Path("chrome.exe"),
+        )
+    return _extend_with_globbed_layouts(
+        [
+            cdir / "chrome-linux64" / "chrome",
+            cdir / "chrome-linux-arm64" / "chrome",
+            cdir / "chrome-linux" / "chrome",
+        ],
+        cdir,
+        "chrome-linux*",
+        Path("chrome"),
+    )
 
 
 def _find_playwright_chromium() -> str | None:
