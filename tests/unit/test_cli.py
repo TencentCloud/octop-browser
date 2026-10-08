@@ -173,6 +173,46 @@ def test_close_session_does_not_accept_mode_flag(capsys):
 
 
 # ---------------------------------------------------------------------------
+# Top-level help and metadata
+# ---------------------------------------------------------------------------
+
+
+def test_top_level_help_groups_commands_and_shows_examples(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        cli_mod.main(["--help"])
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 0
+    assert "commands:" in captured.out
+    assert "Run '<command> --help'" in captured.out
+    assert "Examples:" in captured.out
+    assert "octop-browser navigate https://example.com --profile work" in captured.out
+    assert captured.err == ""
+
+
+def test_version_prints_package_name_and_version(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        cli_mod.main(["--version"])
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 0
+    assert captured.out.startswith("octop-browser ")
+    assert captured.err == ""
+
+
+def test_install_help_explains_playwright_bootstrap(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        cli_mod.main(["install-browser", "--help"])
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 0
+    help_text = " ".join(captured.out.split())
+    assert "managed Chromium binary" in help_text
+    assert "not used to drive the browser" in help_text
+    assert captured.err == ""
+
+
+# ---------------------------------------------------------------------------
 # Output formatting
 # ---------------------------------------------------------------------------
 
