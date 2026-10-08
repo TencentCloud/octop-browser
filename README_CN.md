@@ -369,7 +369,7 @@ make all              # 格式化 + 静态检查 + 类型检查 + 测试
 1. Fork 本仓库
 2. 创建特性分支（`git checkout -b feature/amazing-feature`）
 3. 提交前运行 `make all`
-4. 向 `main` 发起 Pull Request
+4. 向 `develop` 发起 Pull Request
 
 分支、PR 与发版流程见 [CONTRIBUTING.md](CONTRIBUTING.md)（`release/*` → `main` 合并后自动发布到 PyPI）。
 
