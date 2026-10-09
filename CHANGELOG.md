@@ -9,6 +9,7 @@
 
 ### 修复
 
+- 启动 Chrome 不再改写进程级 `XDG_RUNTIME_DIR`：`ensure_xdg_runtime_dir(env)` 与 `prepare_chrome_launch()` 会把它无条件写入 `os.environ`，而该变量是进程全局状态——宿主进程里其他子进程（如 `systemctl --user`，user bus 位于 `$XDG_RUNTIME_DIR/bus`）随后都会解析到错误的 socket，导致 Octop Dashboard「更新后重启服务」失败（TencentCloud/Octop#1833）。现仅在传入的子进程 env 中注入，`os.environ` 保持不变；需要显式改写进程环境的调用方仍可不传 env。
 - Linux arm64 上无法识别 Playwright 已下载的 Chromium：Playwright 没有官方 Linux arm64 构建，会下载非官方回退包（日志中的 `downloading fallback build for ubuntu24.04-arm64`），其平台目录为 `chrome-linux-arm64/`，而 `_playwright_exe_candidates` 只探测 `chrome-linux64/` 与 `chrome-linux/`，导致 `find_chrome()` 返回 `None`、`verify_chromium()` 报 “Chromium binary not found”，安装流程反复重下（二进制其实已完整落盘且可运行）。现补入 `chrome-linux-arm64/`，排在 `chrome-linux64/` 之后、`chrome-linux/` 之前。
 - 新增按目录名匹配的兜底探测（Linux `chrome-linux*`、Windows `chrome-win*`、macOS `chrome-mac*`）：Playwright 的目录名随其实际下载的构建而变，未硬编码的新布局也能被发现。
 

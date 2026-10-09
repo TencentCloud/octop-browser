@@ -61,10 +61,17 @@ def _runtime_dir_for_uid(uid: int | None = None) -> Path:
 
 
 def ensure_xdg_runtime_dir(env: dict[str, str] | None = None) -> Path | None:
-    """Force a writable ``XDG_RUNTIME_DIR`` into *env* (and ``os.environ``).
+    """Ensure a writable ``XDG_RUNTIME_DIR`` for Chrome.
 
     Linux-only: Chrome on Windows/macOS does not rely on ``XDG_RUNTIME_DIR``.
     Returns ``None`` on non-Linux.
+
+    With an *env* mapping (what the launcher hands to Chrome), only that
+    mapping is updated and ``os.environ`` is left untouched: the variable is
+    process-global, and silently relocating it breaks unrelated children of
+    the host process — ``systemctl --user`` resolves the user bus via
+    ``$XDG_RUNTIME_DIR/bus``. Pass no *env* to explicitly redirect the
+    process env instead.
     """
     if not _is_linux():
         return None
@@ -74,8 +81,6 @@ def ensure_xdg_runtime_dir(env: dict[str, str] | None = None) -> Path | None:
     with contextlib.suppress(OSError):
         os.chmod(path, 0o700)
     target["XDG_RUNTIME_DIR"] = str(path)
-    if env is not None:
-        os.environ["XDG_RUNTIME_DIR"] = str(path)
     return path
 
 
@@ -214,8 +219,6 @@ def prepare_chrome_launch(profile: Profile) -> tuple[Profile, dict[str, str]]:
     # env profiles dir in sync for any child tooling (process-global settings
     # stay untouched so other profiles in this process are not redirected).
     env["BROWSER_USE_PROFILES_DIR"] = str(profile.data_dir.parent)
-    if "XDG_RUNTIME_DIR" in env:
-        os.environ["XDG_RUNTIME_DIR"] = env["XDG_RUNTIME_DIR"]
 
     pkill_chrome_profile(profile.data_dir)
     cleared = clear_profile_locks(profile.data_dir)

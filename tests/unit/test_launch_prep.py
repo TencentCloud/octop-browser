@@ -46,6 +46,25 @@ def test_ensure_xdg_runtime_dir_sets_env(monkeypatch: pytest.MonkeyPatch) -> Non
     assert path.is_dir()
 
 
+@linux_only
+def test_ensure_xdg_runtime_dir_does_not_touch_process_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the child env may be redirected, never ``os.environ``.
+
+    ``XDG_RUNTIME_DIR`` is process-global: relocating it makes unrelated
+    children of the host process resolve the wrong sockets — e.g.
+    ``systemctl --user``, whose user bus lives at ``$XDG_RUNTIME_DIR/bus``.
+    """
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/0")
+    env: dict[str, str] = {}
+
+    path = ensure_xdg_runtime_dir(env)
+
+    assert env["XDG_RUNTIME_DIR"] == str(path)
+    assert os.environ["XDG_RUNTIME_DIR"] == "/run/user/0"
+
+
 def test_ensure_xdg_runtime_dir_noop_on_non_linux(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -89,6 +108,21 @@ def test_prepare_chrome_launch_injects_xdg(tmp_path: Path) -> None:
     assert env["XDG_RUNTIME_DIR"].startswith("/tmp/runtime-octop-browser-")
     assert updated.data_dir.exists()
     assert env["BROWSER_USE_PROFILES_DIR"] == str(updated.data_dir.parent)
+
+
+@linux_only
+def test_prepare_chrome_launch_does_not_touch_process_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/0")
+    data = tmp_path / "default"
+    data.mkdir()
+    profile = Profile(name="default", data_dir=data, cdp_port=9336)
+
+    _, env = prepare_chrome_launch(profile)
+
+    assert env["XDG_RUNTIME_DIR"].startswith("/tmp/runtime-octop-browser-")
+    assert os.environ["XDG_RUNTIME_DIR"] == "/run/user/0"
 
 
 @linux_only
