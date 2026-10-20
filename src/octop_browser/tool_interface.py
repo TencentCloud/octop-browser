@@ -149,6 +149,14 @@ async def browser_tool(
                 managed_profile,
                 cdp_host=settings.cdp_host,
             )
+        elif kill:
+            # Direct CDP mode serves a browser this process does not own
+            # (remote host, container, Lightpanda, …); say so instead of
+            # silently pretending the kill happened.
+            logger.info(
+                "kill=True ignored in direct CDP mode "
+                "(BROWSER_USE_CDP_WS_URL); the remote browser keeps running"
+            )
         return ToolResult(
             success=True,
             content=f"Session '{profile}' closed.",

@@ -61,6 +61,7 @@ class RecordSession:
         cdp_host: str | None = None,
         cdp_port: int | None = None,
         initial_target_id: str | None = None,
+        cdp_ws_url: str | None = None,
     ) -> None:
         self.client = client
         self.store = store
@@ -69,6 +70,11 @@ class RecordSession:
         self.cdp_host = cdp_host
         self.cdp_port = cdp_port
         self.initial_target_id = initial_target_id or ""
+        # Direct CDP mode (BROWSER_USE_CDP_WS_URL): the browser-level socket
+        # replaces Chrome's HTTP /json endpoint, which single-endpoint servers
+        # such as Lightpanda do not serve.
+        self.cdp_ws_url = cdp_ws_url
+        self._cdp_direct = cdp_ws_url is not None
         self.binding_name = f"__hbr_emit_{secrets.token_hex(8)}"
         self.nonce = secrets.token_urlsafe(32)
         self.seq = 0
@@ -82,9 +88,7 @@ class RecordSession:
 
     async def start(self) -> None:
         self.active = True
-        existing_targets = (
-            await self._target_infos() if self.cdp_host and self.cdp_port else []
-        )
+        existing_targets = await self._target_infos()
         target_id = self.initial_target_id or "initial"
         self._baseline_target_ids = {
             str(t.get("id") or "")
@@ -95,8 +99,7 @@ class RecordSession:
         self._clients[target_id] = self.client
         self._client_target_ids[id(self.client)] = target_id
         await self._attach_known_targets()
-        if self.cdp_host and self.cdp_port:
-            self._poll_task = asyncio.create_task(self._poll_targets())
+        self._poll_task = asyncio.create_task(self._poll_targets())
 
     async def stop(
         self, *, generate_steps: bool = True, skill_name: str | None = None
@@ -180,6 +183,8 @@ class RecordSession:
         )
 
     async def _target_infos(self) -> list[dict[str, Any]]:
+        if self._cdp_direct:
+            return await self._cdp_target_infos()
         if not self.cdp_host or not self.cdp_port:
             return []
         url = f"http://{self.cdp_host}:{self.cdp_port}/json"
@@ -190,15 +195,47 @@ class RecordSession:
             return []
         return [t for t in targets if isinstance(t, dict) and t.get("type") == "page"]
 
+    async def _cdp_target_infos(self) -> list[dict[str, Any]]:
+        """List page targets over CDP in direct mode.
+
+        Returns the same ``id``/``type``/``url``/``title`` shape the HTTP
+        ``/json`` endpoint produces so the rest of the recorder is agnostic
+        to where the list came from.
+        """
+        try:
+            result = await self.client.send("Target.getTargets")
+        except Exception:  # pylint: disable=broad-except
+            return []
+        return [
+            {
+                "id": str(t.get("targetId") or ""),
+                "type": t.get("type", ""),
+                "url": t.get("url", ""),
+                "title": t.get("title", ""),
+            }
+            for t in result.get("targetInfos", [])
+            if isinstance(t, dict) and t.get("type") == "page"
+        ]
+
     async def _attach_known_targets(self) -> None:
         for target in await self._target_infos():
             target_id = str(target.get("id") or "")
-            ws_url = str(target.get("webSocketDebuggerUrl") or "")
-            if not target_id or not ws_url or target_id in self._clients:
+            if not target_id or target_id in self._clients:
+                continue
+            ws_url = (
+                ""
+                if self._cdp_direct
+                else str(target.get("webSocketDebuggerUrl") or "")
+            )
+            if not self._cdp_direct and not ws_url:
                 continue
             client = CDPClient(timeout=browser_settings.cdp_timeout)
             try:
-                await client.connect(ws_url)
+                if self._cdp_direct:
+                    assert self.cdp_ws_url is not None
+                    await client.connect(self.cdp_ws_url, target_id=target_id)
+                else:
+                    await client.connect(ws_url)
                 await self._install_on_client(client, target_id)
             except Exception:  # pylint: disable=broad-except
                 with suppress(Exception):
@@ -356,6 +393,9 @@ class RecordController:
         p, ws_url = await self._attach(profile)
         client = CDPClient(timeout=self._settings.cdp_timeout)
         await client.connect(ws_url)
+        # In direct mode the URL carries no page id; the attached target id
+        # from the client is what keeps _clients keyed consistently.
+        initial_target_id = client.current_target_id or _target_id_from_ws_url(ws_url)
         info = await client.send(
             "Runtime.evaluate",
             {
@@ -376,7 +416,6 @@ class RecordController:
             privacy=privacy or PrivacySettings(),
         )
         rec_dir = self.store.create(manifest)
-        initial_target_id = _target_id_from_ws_url(ws_url)
         session = RecordSession(
             client,
             self.store,
@@ -384,6 +423,7 @@ class RecordController:
             cdp_host=self._settings.cdp_host if not self._settings.cdp_ws_url else None,
             cdp_port=p.cdp_port if not self._settings.cdp_ws_url else None,
             initial_target_id=initial_target_id,
+            cdp_ws_url=self._settings.cdp_ws_url,
         )
         await session.start()
         return session, {

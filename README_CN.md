@@ -346,6 +346,44 @@ session = await BrowserSession.create(profile="work", settings=settings)
 | `BROWSER_USE_DISABLE_GPU` | 自动（无头时开启） | 强制开启（`1`）/ 禁用（`0`）`--disable-gpu`。默认无头模式开启，有头模式关闭 |
 | `BROWSER_USE_DISABLE_DEV_SHM_USAGE` | 自动（Linux 开启） | 强制开启（`1`）/ 禁用（`0`）`--disable-dev-shm-usage`。默认在 Linux 开启——Docker 默认的 64 MiB `/dev/shm` 对 Chrome 来说太小 |
 
+### 连接已有的浏览器（直连 CDP 模式）
+
+`BROWSER_USE_CDP_WS_URL` 跳过本地启动器，直接连接一个 CDP WebSocket 端点——
+适用于远程主机、Docker 容器，或 [Lightpanda](https://github.com/lightpanda-io/browser)
+这类轻量 CDP 服务器。支持两种 URL 形态：
+
+```python
+from octop_browser import BrowserSession, OctopSettings
+
+# browser 级端点：Chrome 的 /devtools/browser/<id>，或 Lightpanda 这类
+# 单端点服务器的 ws://host:9222/。octop-browser 会自动 attach 到页面 target。
+settings = OctopSettings(cdp_ws_url="ws://remote-host:9222/")
+session = await BrowserSession.create(profile="remote", settings=settings)
+
+# page 级端点：Chrome 的 /devtools/page/<id>。连接本身就绑定该页面，按原样使用。
+settings = OctopSettings(cdp_ws_url="ws://remote-host:9222/devtools/page/ABC123")
+session = await BrowserSession.create(profile="remote", settings=settings)
+```
+
+两种形态都支持全部动作。直连模式的能力边界：
+
+- `close_session(kill=True)` **不会**终止远程浏览器——URL 背后的进程不由
+  octop-browser 所有（会记录一条日志说明）。请用浏览器自身的关闭方式，
+  或按标签页调用 `close_tab`。
+- 标签页管理（`new_tab` / `switch_tab` / `close_tab` / `list_tabs`）走 CDP
+  `Target.*` 命令。未实现 Target 域的浏览器无法列举或切换标签页。
+- 空闲回收（`BROWSER_USE_IDLE_TIMEOUT_MINUTES`）只对本地启动的 Chrome 生效，
+  直连模式下不启用。
+- 单标签、单会话的服务器（如 Lightpanda）：`new_tab` 在 URL 相当时复用既有
+  标签，不同 URL 时失败；全部连接断开后标签即回收，跨进程的标签粘性不适用；
+  页面事件只推送给发出命令的连接，因此 recorder 无法通过第二个连接观测
+  这类服务器上的操作。
+- CLI 模式（每条命令一个进程）面对「连接断开即回收标签」的服务器：每条命令
+  都从空白页开始，检测到丢失时 octop-browser 会记录警告；此类浏览器建议
+  改用 Python API 维持长会话。
+- 回放（replay）在直连模式下可用（与动作走同一会话 API）；但在单会话服务器上
+  录制（record）capture 不到任何事件——页面事件只送达发出命令的连接。
+
 ## 🛠️ 开发
 
 **环境要求：** Python 3.11+、[uv](https://docs.astral.sh/uv/)

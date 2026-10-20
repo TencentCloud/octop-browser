@@ -91,6 +91,7 @@ async def test_new_tab_reuses_existing_blank_tab_for_first_url(monkeypatch):
     class FakeInternal:
         def __init__(self) -> None:
             self.client = self
+            self.is_browser_level = False
             self.ref_cache = FakeRefCache()
             self._profile = SimpleNamespace(load_target=lambda: "CURRENT")
             self._cfg = SimpleNamespace(cdp_ws_url=None)
@@ -149,6 +150,7 @@ async def test_new_tab_reports_navigation_failure_when_reusing_current_blank(
     class FakeInternal:
         def __init__(self) -> None:
             self.client = self
+            self.is_browser_level = False
             self.ref_cache = FakeRefCache()
             self._profile = SimpleNamespace(load_target=lambda: "CURRENT")
             self._cfg = SimpleNamespace(cdp_ws_url=None)
@@ -203,6 +205,7 @@ async def test_new_tab_reuses_background_blank_tab_before_creating_target(
     class FakeInternal:
         def __init__(self) -> None:
             self.client = self
+            self.is_browser_level = False
             self.ref_cache = FakeRefCache()
             self._profile = SimpleNamespace(
                 cdp_port=9222, load_target=lambda: "CURRENT"
@@ -294,6 +297,7 @@ async def test_new_tab_creates_target_with_url_and_activates_it(monkeypatch):
     class FakeInternal:
         def __init__(self) -> None:
             self.client = self
+            self.is_browser_level = False
             self.ref_cache = FakeRefCache()
             self._profile = SimpleNamespace(
                 cdp_port=9222, load_target=lambda: "CURRENT"
@@ -382,6 +386,7 @@ async def test_new_tab_creates_target_with_destination_url_to_avoid_blank_flash(
     class FakeInternal:
         def __init__(self) -> None:
             self.client = self
+            self.is_browser_level = False
             self.ref_cache = FakeRefCache()
             self._profile = SimpleNamespace(
                 cdp_port=9222, load_target=lambda: "CURRENT"
@@ -471,6 +476,7 @@ async def test_new_tab_retries_switch_when_created_target_is_not_ready(monkeypat
     class FakeInternal:
         def __init__(self) -> None:
             self.client = self
+            self.is_browser_level = False
             self.ref_cache = FakeRefCache()
             self._profile = SimpleNamespace(
                 cdp_port=9222, load_target=lambda: "CURRENT"
@@ -554,6 +560,7 @@ async def test_new_tab_reports_create_target_failure(monkeypatch):
     class FakeInternal:
         def __init__(self) -> None:
             self.client = self
+            self.is_browser_level = False
             self.ref_cache = FakeRefCache()
             self._profile = SimpleNamespace(
                 cdp_port=9222, load_target=lambda: "CURRENT"
@@ -637,6 +644,7 @@ async def test_list_tabs_marks_only_sticky_target_active(monkeypatch):
 
     class FakeInternal:
         def __init__(self) -> None:
+            self.client = SimpleNamespace(is_browser_level=False)
             self._profile = SimpleNamespace(
                 cdp_port=9222,
                 load_target=lambda: "TAB-2",
@@ -715,6 +723,7 @@ async def test_new_tab_force_new_does_not_reuse_current_blank_tab(monkeypatch):
     class FakeInternal:
         def __init__(self) -> None:
             self.client = self
+            self.is_browser_level = False
             self.ref_cache = FakeRefCache()
             self._profile = SimpleNamespace(
                 cdp_port=9222, load_target=lambda: "CURRENT"

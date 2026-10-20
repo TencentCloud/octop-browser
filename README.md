@@ -350,6 +350,53 @@ session = await BrowserSession.create(profile="work", settings=settings)
 | `BROWSER_USE_DISABLE_GPU` | auto (on in headless) | Force (`1`) / forbid (`0`) `--disable-gpu`. Defaults to on in headless mode, off in headed mode |
 | `BROWSER_USE_DISABLE_DEV_SHM_USAGE` | auto (on in Linux) | Force (`1`) / forbid (`0`) `--disable-dev-shm-usage`. Defaults to on on Linux, where Docker's 64 MiB `/dev/shm` is too small for Chrome |
 
+### Connecting to an existing browser (direct CDP mode)
+
+`BROWSER_USE_CDP_WS_URL` bypasses the launcher and connects straight to a CDP
+WebSocket endpoint — for a remote host, a Docker container, or a lightweight
+CDP server such as [Lightpanda](https://github.com/lightpanda-io/browser).
+Two URL shapes are supported:
+
+```python
+from octop_browser import BrowserSession, OctopSettings
+
+# Browser-level endpoint: Chrome's /devtools/browser/<id>, or a
+# single-endpoint server such as Lightpanda's ws://host:9222/.
+# octop-browser attaches to a page target for you.
+settings = OctopSettings(cdp_ws_url="ws://remote-host:9222/")
+session = await BrowserSession.create(profile="remote", settings=settings)
+
+# Page-level endpoint: Chrome's /devtools/page/<id>. The socket is already
+# bound to that page and is used as-is.
+settings = OctopSettings(cdp_ws_url="ws://remote-host:9222/devtools/page/ABC123")
+session = await BrowserSession.create(profile="remote", settings=settings)
+```
+
+Both shapes support the full action set. Known limitations of direct mode:
+
+- `close_session(kill=True)` does **not** terminate the remote browser — the
+  process behind the URL is not owned by octop-browser (a log line records
+  this). Stop it with the browser's own shutdown, or per tab via
+  `close_tab`.
+- Tab management (`new_tab` / `switch_tab` / `close_tab` / `list_tabs`) runs
+  over CDP `Target.*` commands. Browsers that do not implement the Target
+  domain cannot list or switch tabs.
+- Idle reaping (`BROWSER_USE_IDLE_TIMEOUT_MINUTES`) covers locally launched
+  Chrome only and is inactive in direct mode.
+- Single-tab, single-session servers (Lightpanda): `new_tab` reuses the
+  existing target when the URL matches and fails when it does not; targets
+  are dropped when the last connection closes, so cross-process target
+  stickiness does not apply; and because page events reach only the
+  connection that issued the command, the recorder cannot observe actions
+  driven from a second connection against such a server.
+- CLI mode (one process per command) against servers that recycle targets
+  when the last connection closes: every command starts from a fresh page.
+  octop-browser logs a warning when it detects the loss; prefer the Python
+  API (one long-lived session) for such browsers.
+- Replay works in direct mode (it drives actions through the same session
+  API); recording against single-session servers captures no events, since
+  page events only reach the connection that issued the command.
+
 ## 🛠️ Development
 
 **Prerequisites:** Python 3.11+, [uv](https://docs.astral.sh/uv/)

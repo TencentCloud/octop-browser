@@ -52,32 +52,53 @@ class Profile:
         Used by :func:`octop_browser.cdp.launcher.get_page_ws_url` to
         re-attach to the same tab across CLI invocations.
         """
+        target_id, _ = self.load_target_state()
+        return target_id
+
+    def load_target_state(self) -> tuple[str | None, str | None]:
+        """Return ``(target_id, url)`` from the cached state, or ``(None, None)``.
+
+        The url lets a new session notice that a remote browser dropped the
+        previous page — some servers (Lightpanda) recycle target ids, so an
+        unchanged id alone does not prove the page survived.
+        """
         path = self._target_state_path
         if not path.is_file():
             legacy = self.data_dir / _LEGACY_TARGET_STATE_FILE
             if not legacy.is_file():
-                return None
+                return None, None
             path = legacy
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as exc:
             logger.debug("Could not read %s: %s", path, exc)
-            return None
+            return None, None
+        if not isinstance(payload, dict):
+            return None, None
         target_id = payload.get("target_id")
-        return target_id if isinstance(target_id, str) and target_id else None
+        url = payload.get("url")
+        return (
+            target_id if isinstance(target_id, str) and target_id else None,
+            url if isinstance(url, str) and url else None,
+        )
 
-    def save_target(self, target_id: str) -> None:
-        """Persist the active page-level target id.
+    def save_target(self, target_id: str, url: str | None = None) -> None:
+        """Persist the active page-level target id (and optionally its url).
 
         Best-effort: any I/O error is swallowed (next attach falls back to
-        the heuristic in ``get_page_ws_url``).
+        the heuristic in ``get_page_ws_url``). Omitting *url* keeps only the
+        id — callers that switch tabs without knowing the new page's url
+        use that form.
         """
         if not target_id:
             return
         path = self._target_state_path
+        payload: dict[str, str] = {"target_id": target_id}
+        if url:
+            payload["url"] = url
         try:
             path.write_text(
-                json.dumps({"target_id": target_id}),
+                json.dumps(payload),
                 encoding="utf-8",
             )
         except OSError as exc:

@@ -14,6 +14,31 @@
 
 ### 变更
 
+- CLI 直连冒烟续修：补 `__main__.py` 修复 `python -m octop_browser`
+  （README 与 `make run` 均如此记载但此前不可用）；connect 优先 attach
+  profile 记住的 target（与 launcher sticky 语义一致），不存在时自动回退；
+  profile 状态文件新增 url 字段并在 navigate 后刷新，attach 后比对 URL，
+  远程浏览器丢失页面时 warning 明确告警（Lightpanda 复用回收后的 target
+  id，仅靠 id 无法发现）。README 补充 CLI 模式对「回收型」服务器的边界。
+- 直连 CDP 模式续修（第二批）：connect 后把 attach 的 target id 写入 profile，
+  修复 `_current_target_id()` 恒空导致 `list_tabs` active 标记失效与跨进程粘性
+  缺失；recorder 直连模式的标签页发现/轮询改走 CDP `Target.getTargets`（替代
+  Chrome 专有的 HTTP `/json`），新开标签页可被发现并单独 attach；
+  `CDPClient.connect` 支持指定 `target_id` 并暴露 `current_target_id`；`new_tab`
+  对 `TargetAlreadyLoaded` 规范化——Chrome 对重复 URL 返回既有 targetId、
+  Lightpanda（单标签）对第二次 createTarget 一律报错，现统一回退为复用同 URL
+  既有 target；`browser_tool` 的 `close_session(kill=True)` 直连模式记录日志。
+  README 补充单标签/单会话服务器（Lightpanda）的能力边界。
+- 修复直连 CDP 模式（`BROWSER_USE_CDP_WS_URL`）：browser 级端点现在会在连接时
+  自动 `Target.attachToTarget` 建立页面会话，页面域命令携带 sessionId；此前直连
+  标准 CDP 服务器（如 Lightpanda）会在 `Runtime.enable` 阶段报
+  `BrowserContextNotLoaded`，该模式实际不可用。标签页管理（新建/切换/关闭/列举）
+  改走 CDP `Target.*` 命令，不再依赖 Chrome 专有的 HTTP `/json` 端点；直连模式下
+  `close_session(kill=True)` 不再静默无操作（记录日志说明不终止远程浏览器）；
+  viewport 设置失败时记录 warning 而非静默。README 补充两种端点形态的用法与直连
+  模式的能力边界，新增 mock CDP server 单元测试覆盖上述行为。
+- 修正 `mcp` 依赖上限：`<3` 改回 `<2`，与注释及运行时要求一致（mcp 2.x 删除了
+  `mcp_server.py` 依赖的低层 `Server.list_tools` / `Server.call_tool` API）。
 - 对齐 Octop：引入 `develop` 集成分支策略；禁止直推 `main`/`develop`；发版后由 `sync-main-to-develop.yml` 同步；新增 `/publish` skill（发版同步 CHANGELOG / README）。
 
 
