@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from octop_browser.actions.navigate import navigate
+from octop_browser.actions.navigate import navigate, validate_navigation_url
 
 
 class FakeClient:
@@ -109,3 +109,56 @@ async def test_navigate_does_not_wait_thirty_seconds_when_load_event_is_missing(
     assert result.success is True
     assert observed_timeout is not None
     assert observed_timeout <= 10.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "blocked_url",
+    [
+        "file:///etc/passwd",
+        "file:///",
+        "file:/etc/passwd",
+        "FILE:///C:/Windows/win.ini",
+        "  file:///etc/passwd  ",
+        "view-source:file:///etc/passwd",
+        "view-source:https://example.com",
+        "javascript:alert(1)",
+        "chrome://settings",
+        "chrome-extension://abcdef/popup.html",
+        "devtools://devtools/bundled/inspector.html",
+        "filesystem:https://example.com/temporary/a.txt",
+        "about:config",
+        "https://",
+        "data:",
+        "/etc/passwd",
+        "",
+        "   ",
+        "https://example.com/\n",
+    ],
+)
+async def test_navigate_blocks_unsafe_url_schemes_without_cdp(blocked_url: str) -> None:
+    client = FakeClient({"frameId": "F"})
+    ref_cache = FakeRefCache()
+
+    result = await navigate(client, ref_cache, blocked_url)
+
+    assert result.success is False
+    assert result.content == ""
+    assert result.error is not None
+    assert "Blocked" in result.error
+    assert client.sent == []
+    assert client.listeners == {}
+    assert ref_cache.invalidated is False
+
+
+@pytest.mark.parametrize(
+    "allowed_url",
+    [
+        "https://example.com",
+        "http://127.0.0.1:8080/demo.html",
+        "data:text/html,<h1>Hello</h1>",
+        "about:blank",
+    ],
+)
+def test_validate_navigation_url_allows_safe_schemes(allowed_url: str) -> None:
+    assert validate_navigation_url(allowed_url) is None

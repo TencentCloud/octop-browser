@@ -9,6 +9,7 @@
 
 ### 修复
 
+- 阻止危险 URL scheme 导航（如 `file://`、`view-source:`、`javascript:`、`chrome://` 等）：在 `validate_navigation_url()` 与 `BrowserSession.new_tab()` 中仅放行 `http`、`https`、`data` 与 `about:blank`，在任何 CDP `Page.navigate` / `Target.createTarget` 调用及 `RefCache` 失效前拒绝非允许协议，防止经由无头浏览器读取本地文件或访问浏览器内部页（对应 `TencentCloud/Octop#2945`）。
 - Linux arm64 上无法识别 Playwright 已下载的 Chromium：Playwright 没有官方 Linux arm64 构建，会下载非官方回退包（日志中的 `downloading fallback build for ubuntu24.04-arm64`），其平台目录为 `chrome-linux-arm64/`，而 `_playwright_exe_candidates` 只探测 `chrome-linux64/` 与 `chrome-linux/`，导致 `find_chrome()` 返回 `None`、`verify_chromium()` 报 “Chromium binary not found”，安装流程反复重下（二进制其实已完整落盘且可运行）。现补入 `chrome-linux-arm64/`，排在 `chrome-linux64/` 之后、`chrome-linux/` 之前。
 - 新增按目录名匹配的兜底探测（Linux `chrome-linux*`、Windows `chrome-win*`、macOS `chrome-mac*`）：Playwright 的目录名随其实际下载的构建而变，未硬编码的新布局也能被发现。
 

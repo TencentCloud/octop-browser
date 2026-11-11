@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from octop_browser.cdp.client import CDPSessionError
 from octop_browser.models import ActionMetrics, ToolResult
 from octop_browser.tool_interface import browser_tool
@@ -777,3 +779,136 @@ async def test_close_session_kill_pops_registry_before_close():
     assert result.success is True
     assert events == ["close:True"]
     assert profile not in tool_interface_mod._registry
+
+
+@pytest.mark.parametrize("force_new", [False, True])
+@pytest.mark.parametrize(
+    "blocked_url",
+    [
+        "file:///etc/passwd",
+        "FILE:///C:/Windows/win.ini",
+        "  file:///etc/hosts",
+        "view-source:file:///etc/passwd",
+        "javascript:alert(1)",
+        "chrome://settings",
+    ],
+)
+async def test_new_tab_blocks_unsafe_url_without_cdp(blocked_url: str, force_new: bool):
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeRefCache:
+        pass
+
+    class FakeInternal:
+        def __init__(self) -> None:
+            self.client = self
+            self.ref_cache = FakeRefCache()
+            self._profile = SimpleNamespace(
+                cdp_port=9222, load_target=lambda: "CURRENT"
+            )
+            self._cfg = SimpleNamespace(cdp_ws_url=None, cdp_host="localhost")
+
+        async def send(
+            self, method: str, params: dict[str, object] | None = None
+        ) -> dict[str, object]:
+            calls.append((method, params or {}))
+            raise AssertionError(f"unexpected CDP command {method}")
+
+    from octop_browser.session import BrowserSession
+
+    sess = BrowserSession(FakeInternal(), profile_name="test")  # type: ignore[arg-type]
+    result = await sess.new_tab(blocked_url, force_new=force_new)
+
+    assert result.success is False
+    assert result.content == ""
+    assert result.error is not None
+    assert "Blocked" in result.error
+    assert calls == []
+    assert sess.metrics_summary()["errors"] == 1
+
+
+async def test_browser_tool_navigate_and_new_tab_block_file_url():
+    from octop_browser import tool_interface as tool_interface_mod
+    from octop_browser.session import BrowserSession
+
+    profile = "_test_block_file_url_"
+    cdp_calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeRefCache:
+        def invalidate(self) -> None:
+            cdp_calls.append(("invalidate", {}))
+
+    class FakeInternal:
+        def __init__(self) -> None:
+            self.client = self
+            self.ref_cache = FakeRefCache()
+            self._profile = SimpleNamespace(
+                cdp_port=9222, load_target=lambda: "CURRENT"
+            )
+            self._cfg = SimpleNamespace(cdp_ws_url=None, cdp_host="localhost")
+
+        async def send(
+            self, method: str, params: dict[str, object] | None = None
+        ) -> dict[str, object]:
+            cdp_calls.append((method, params or {}))
+            raise AssertionError(f"unexpected CDP command {method}")
+
+        def on(self, event: str, callback):
+            cdp_calls.append(("on", {"event": event}))
+
+        def off(self, event: str, callback):
+            cdp_calls.append(("off", {"event": event}))
+
+    tool_interface_mod._registry[profile] = BrowserSession(
+        FakeInternal(),  # type: ignore[arg-type]
+        profile_name=profile,
+    )
+    try:
+        nav_result = await browser_tool(
+            action="navigate", profile=profile, url="file:///etc/passwd"
+        )
+        tab_result = await browser_tool(
+            action="new_tab", profile=profile, url="file:///etc/passwd", force_new=True
+        )
+    finally:
+        tool_interface_mod._registry.pop(profile, None)
+
+    assert nav_result.success is False
+    assert "Blocked" in (nav_result.error or "")
+    assert tab_result.success is False
+    assert "Blocked" in (tab_result.error or "")
+    assert cdp_calls == []
+
+
+async def test_browser_tool_blocks_unsafe_url_in_urls_list(monkeypatch):
+    from octop_browser import tool_interface as tool_interface_mod
+
+    called = False
+
+    async def unexpected_create(*args, **kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("BrowserSession.create should not run for blocked urls")
+
+    monkeypatch.setattr(tool_interface_mod.BrowserSession, "create", unexpected_create)
+
+    result = await browser_tool(
+        action="list_tabs",
+        profile="_test_urls_blocked_",
+        urls=["https://example.com", "file:///etc/passwd"],
+    )
+    assert result.success is False
+    assert "Blocked" in (result.error or "")
+    assert called is False
+
+
+async def test_browser_session_create_blocks_unsafe_url_in_urls_list(tmp_path):
+    from octop_browser.profile import ProfileManager
+    from octop_browser.session import BrowserSession
+
+    with pytest.raises(ValueError, match="Blocked"):
+        await BrowserSession.create(
+            profile="_test_create_urls_blocked_",
+            urls=["file:///etc/passwd"],
+            profile_manager=ProfileManager(base_dir=tmp_path),
+        )
