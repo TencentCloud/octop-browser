@@ -5,12 +5,45 @@ from __future__ import annotations
 import asyncio
 import time
 from typing import Any
+from urllib.parse import urlsplit
 
 from octop_browser.cdp.client import CDPClient
 from octop_browser.dom.refs import RefCache
 from octop_browser.models import ActionMetrics, ToolResult
 
 _LOAD_EVENT_TIMEOUT_SECONDS = 5.0
+
+
+def validate_navigation_url(url: str) -> str | None:
+    """Validate that a navigation target uses a safe URL scheme.
+
+    Returns a descriptive error message when blocked, or ``None`` when allowed.
+    """
+    stripped = url.strip()
+    if not stripped:
+        return "Blocked navigation URL: URL must not be empty."
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in url):
+        return f"Blocked navigation URL {url!r}: control characters are not allowed."
+    try:
+        parsed = urlsplit(stripped)
+    except ValueError as exc:
+        return f"Blocked invalid navigation URL {url!r}: {exc}"
+
+    scheme = parsed.scheme.lower()
+    if scheme in {"http", "https"}:
+        if not parsed.netloc:
+            return f"Blocked navigation URL {url!r}: missing host."
+        return None
+    if scheme == "data":
+        if not parsed.path:
+            return f"Blocked navigation URL {url!r}: empty data URL."
+        return None
+    if scheme == "about" and stripped.lower() == "about:blank":
+        return None
+    return (
+        f"Blocked unsafe URL scheme {scheme or '<none>'!r} for navigation target: "
+        "only http, https, data, and about:blank URLs are allowed."
+    )
 
 
 def _metrics(action: str, start: float) -> ActionMetrics:
@@ -25,6 +58,13 @@ def _metrics(action: str, start: float) -> ActionMetrics:
 async def navigate(client: CDPClient, ref_cache: RefCache, url: str) -> ToolResult:
     """Navigate the page to a URL and wait for load."""
     start = time.monotonic()
+    if url_error := validate_navigation_url(url):
+        return ToolResult(
+            success=False,
+            content="",
+            error=url_error,
+            metrics=_metrics("navigate", start),
+        )
     ref_cache.invalidate()
     load_event: asyncio.Future[None] = asyncio.get_event_loop().create_future()
 

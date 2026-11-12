@@ -223,6 +223,10 @@ class BrowserSession(HooksMixin):
             settings: :class:`OctopSettings` instance. Defaults to the module-level
                 singleton which reads from environment variables.
         """
+        if urls:
+            for url in urls:
+                if url_error := nav_actions.validate_navigation_url(url):
+                    raise ValueError(url_error)
         cfg = settings or _default_settings
         pm = profile_manager or _default_profile_manager
         p = pm.get_or_create(profile)
@@ -569,6 +573,18 @@ class BrowserSession(HooksMixin):
             {"action": "new_tab", "params": {"url": url, "force_new": force_new}},
         )
         try:
+            if url and (url_error := nav_actions.validate_navigation_url(url)):
+                metrics = ActionMetrics(
+                    action="new_tab",
+                    duration_ms=int((time.monotonic() - start) * 1000),
+                    dom_nodes_scanned=0,
+                    estimated_tokens=0,
+                )
+                result = ToolResult(
+                    success=False, content="", error=url_error, metrics=metrics
+                )
+                await self._record(result)
+                return result
             target_id: str | None = None
             navigation_result: ToolResult | None = None
             current_url = (

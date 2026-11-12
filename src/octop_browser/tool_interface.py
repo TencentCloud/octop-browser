@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from octop_browser.actions.navigate import validate_navigation_url
 from octop_browser.cdp.client import CDPSessionError
 from octop_browser.mode import BrowserMode
 from octop_browser.models import ActionMetrics, ToolResult
@@ -159,6 +160,11 @@ async def browser_tool(
                 estimated_tokens=0,
             ),
         )
+
+    if urls:
+        for url in urls:
+            if url_error := validate_navigation_url(url):
+                return _error_result(action, url_error)
 
     try:
         sess = await _get_or_create_session(
