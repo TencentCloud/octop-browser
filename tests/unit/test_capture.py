@@ -142,3 +142,59 @@ async def test_switch_target_preserves_command_gate(tmp_path: Path, monkeypatch)
     await internal.switch_to_target("next", activate=False)
     assert original.command_gate is gate
     assert internal.client.command_gate is gate
+
+
+async def test_connect_gate_covers_launch_and_websocket_without_nesting(
+    tmp_path: Path, monkeypatch
+):
+    from contextlib import asynccontextmanager
+
+    import octop_browser.session as session_module
+    from octop_browser.profile import Profile
+    from octop_browser.session import _InternalCDPSession
+    from octop_browser.settings import OctopSettings
+
+    events: list[str] = []
+
+    @asynccontextmanager
+    async def gate(method: str, params: dict):
+        events.append(f"enter:{method}")
+        yield
+        events.append(f"exit:{method}")
+
+    class FakeClient:
+        async def connect(self, ws_url: str) -> None:
+            events.append("websocket")
+
+        async def enable_domain(self, domain: str) -> None:
+            events.append(f"enable:{domain}")
+
+    async def launch(profile, headless: bool) -> None:
+        events.append("launch")
+
+    async def page_ws_url(port: int, profile=None) -> str:
+        events.append("resolve-page")
+        return "ws://test"
+
+    async def no_viewport() -> None:
+        return
+
+    monkeypatch.setattr(session_module, "launch_or_attach", launch)
+    monkeypatch.setattr(session_module, "get_page_ws_url", page_ws_url)
+    profile = Profile(name="test", data_dir=tmp_path, cdp_port=9222)
+    internal = _InternalCDPSession(profile, OctopSettings(), command_gate=gate)
+    internal._client = FakeClient()
+    monkeypatch.setattr(internal, "_apply_viewport", no_viewport)
+
+    await internal.connect()
+
+    assert events == [
+        "enter:BrowserSession.connect",
+        "launch",
+        "resolve-page",
+        "websocket",
+        "exit:BrowserSession.connect",
+        "enable:Page",
+        "enable:DOM",
+        "enable:Runtime",
+    ]

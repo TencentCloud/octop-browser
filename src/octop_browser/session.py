@@ -59,15 +59,12 @@ class _InternalCDPSession:
         If ``BROWSER_USE_CDP_WS_URL`` is set (or ``cfg.cdp_ws_url`` is provided),
         skip the launcher and connect directly to that WebSocket address.
         """
-        if self._cfg.cdp_ws_url:
-            ws_url = self._cfg.cdp_ws_url
-            logger.debug("Direct CDP connect to %s", ws_url)
+        if self._command_gate is None:
+            await self._connect_client(headless=headless)
         else:
-            await launch_or_attach(self._profile, headless=headless)
-            ws_url = await get_page_ws_url(
-                self._profile.cdp_port, profile=self._profile
-            )
-        await self._client.connect(ws_url)
+            # The outer gate ends before enable_domain(), avoiding nested leases.
+            async with self._command_gate("BrowserSession.connect", {}):
+                await self._connect_client(headless=headless)
         await self._client.enable_domain("Page")
         await self._client.enable_domain("DOM")
         await self._client.enable_domain("Runtime")
@@ -77,6 +74,17 @@ class _InternalCDPSession:
         self._connected = True
         if self._idle_controller is not None:
             self._idle_controller.start()
+
+    async def _connect_client(self, *, headless: bool) -> None:
+        if self._cfg.cdp_ws_url:
+            ws_url = self._cfg.cdp_ws_url
+            logger.debug("Direct CDP connect to %s", ws_url)
+        else:
+            await launch_or_attach(self._profile, headless=headless)
+            ws_url = await get_page_ws_url(
+                self._profile.cdp_port, profile=self._profile
+            )
+        await self._client.connect(ws_url)
 
     async def _apply_viewport(self) -> None:
         """Pin the page viewport to the configured CSS-pixel dimensions.
@@ -231,6 +239,8 @@ class BrowserSession(HooksMixin):
                 non-default base directories).
             settings: :class:`OctopSettings` instance. Defaults to the module-level
                 singleton which reads from environment variables.
+            command_gate: Optional async context manager factory coordinating the
+                launch/connect lifecycle and each subsequent CDP command.
         """
         cfg = settings or _default_settings
         pm = profile_manager or _default_profile_manager
