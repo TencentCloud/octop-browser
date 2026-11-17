@@ -28,6 +28,7 @@ async def test_browser_tool_missing_required_param():
     # navigate requires url; omitting it should return error
     with patch("octop_browser.tool_interface._get_or_create_session") as mock_get:
         mock_sess = AsyncMock()
+        mock_sess._internal = SimpleNamespace(_command_gate=None)
         mock_sess.navigate = AsyncMock(side_effect=TypeError("missing url"))
         mock_get.return_value = mock_sess
         result = await browser_tool(action="navigate", profile="_test_missing_")
@@ -780,10 +781,18 @@ async def test_close_session_kill_pops_registry_before_close():
 
 
 async def test_configured_gate_is_used_for_browser_session_creation(monkeypatch):
+    from contextlib import asynccontextmanager
+
     from octop_browser import tool_interface as tool_interface_mod
 
     profile = "_test_configured_gate_"
-    gate = object()
+    events: list[str] = []
+
+    @asynccontextmanager
+    async def gate(method: str, _params: dict):
+        events.append(method)
+        yield
+
     captured: dict[str, object] = {}
 
     class FakeSession:
@@ -810,6 +819,7 @@ async def test_configured_gate_is_used_for_browser_session_creation(monkeypatch)
     assert result.success is True
     assert captured["command_gate"] is gate
     assert captured["url"] == "https://example.test"
+    assert events == ["browser_tool.navigate"]
 
 
 async def test_configured_gate_rejects_an_uncoordinated_existing_session():
@@ -867,3 +877,20 @@ async def test_host_write_gate_still_allows_reads(monkeypatch):
 
     assert result.success is True
     session.dom_tree.assert_awaited_once_with()
+
+
+async def test_host_write_gate_allows_session_cleanup():
+    from octop_browser import tool_interface as tool_interface_mod
+
+    profile = "_test_write_gate_cleanup_"
+    session = SimpleNamespace(close=AsyncMock())
+    tool_interface_mod._registry[profile] = session
+    tool_interface_mod.configure_browser_write_gate(lambda _profile: False)
+    try:
+        result = await browser_tool(action="close_session", profile=profile, kill=True)
+    finally:
+        tool_interface_mod.configure_browser_write_gate(None)
+        tool_interface_mod._registry.pop(profile, None)
+
+    assert result.success is True
+    session.close.assert_awaited_once_with(kill=True)

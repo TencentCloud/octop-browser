@@ -24,6 +24,42 @@ async def test_gate_uses_the_shared_profile_path(tmp_path: Path) -> None:
         assert json.loads(path.read_text(encoding="utf-8"))["profile"] == "user-1"
 
 
+async def test_control_state_is_shared_and_blocks_the_daemon_gate(
+    tmp_path: Path,
+) -> None:
+    from octop_browser.lease import (
+        clear_control_owner,
+        control_owner_path,
+        profile_control_command_gate,
+        read_control_owner,
+        write_control_owner,
+    )
+
+    write_control_owner("user-1", "user", profiles_dir=tmp_path)
+    assert read_control_owner("user-1", profiles_dir=tmp_path) == "user"
+    assert json.loads(
+        control_owner_path("user-1", profiles_dir=tmp_path).read_text()
+    ) == {"owner": "user"}
+    gate = profile_control_command_gate("user-1", profiles_dir=tmp_path)
+    with pytest.raises(BrowserLeaseError) as error:
+        async with gate("Runtime.evaluate", {}):
+            pass
+    assert error.value.code == "WRITE_BLOCKED"
+    clear_control_owner("user-1", profiles_dir=tmp_path)
+    assert read_control_owner("user-1", profiles_dir=tmp_path) == "agent"
+
+
+async def test_invalid_control_state_fails_closed(tmp_path: Path) -> None:
+    from octop_browser.lease import control_owner_path, read_control_owner
+
+    path = control_owner_path("user-1", profiles_dir=tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{", encoding="utf-8")
+    with pytest.raises(BrowserLeaseError) as error:
+        read_control_owner("user-1", profiles_dir=tmp_path)
+    assert error.value.code == "WRITE_BLOCKED"
+
+
 async def test_nested_lease_in_the_same_task_locks_only_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

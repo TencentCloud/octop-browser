@@ -121,6 +121,21 @@ def _is_disconnected_error(exc: Exception) -> bool:
     return False
 
 
+async def _execute_session_action(
+    sess: BrowserSession, action: str, kwargs: dict[str, Any]
+) -> ToolResult:
+    method = getattr(sess, action)
+    internal = getattr(sess, "_internal", None)
+    gate = getattr(internal, "_command_gate", None)
+    result: ToolResult
+    if gate is None:
+        result = await method(**kwargs)
+    else:
+        async with gate(f"browser_tool.{action}", {}):
+            result = await method(**kwargs)
+    return result
+
+
 async def browser_tool(
     action: str,
     profile: str = "default",
@@ -155,7 +170,7 @@ async def browser_tool(
             action, f"Unknown action '{action}'. Valid: {sorted(_KNOWN_ACTIONS)}"
         )
     if (
-        action not in {"dom_tree", "list_tabs", "screenshot", "wait"}
+        action not in {"dom_tree", "list_tabs", "screenshot", "wait", "close_session"}
         and _write_gate_factory is not None
         and not _write_gate_factory(profile)
     ):
@@ -215,14 +230,14 @@ async def browser_tool(
     if urls and profile in _registry:
         for i, url in enumerate(urls):
             if i == 0:
-                await sess.navigate(url)
+                await _execute_session_action(sess, "navigate", {"url": url})
             else:
-                await sess.new_tab(url=url, force_new=True)
+                await _execute_session_action(
+                    sess, "new_tab", {"url": url, "force_new": True}
+                )
 
     try:
-        method = getattr(sess, action)
-        result: ToolResult = await method(**kwargs)
-        return result
+        return await _execute_session_action(sess, action, kwargs)
     except TypeError as exc:
         return _error_result(action, f"Invalid parameters for '{action}': {exc}")
     except Exception as exc:  # pylint: disable=broad-except
@@ -237,9 +252,7 @@ async def browser_tool(
                 fresh = await _get_or_create_session(
                     profile, headless=headless, mode=mode, urls=urls
                 )
-                method = getattr(fresh, action)
-                retry_result: ToolResult = await method(**kwargs)
-                return retry_result
+                return await _execute_session_action(fresh, action, kwargs)
             except TypeError as retry_exc:
                 return _error_result(
                     action, f"Invalid parameters for '{action}': {retry_exc}"

@@ -35,6 +35,23 @@ async def test_daemon_uses_the_shared_profile_lease(monkeypatch, tmp_path):
         assert lease_path("user-1", profiles_dir=tmp_path).is_file()
 
 
+async def test_daemon_rejects_recording_start_during_user_control(
+    monkeypatch, tmp_path
+):
+    from octop_browser.lease import write_control_owner
+    from octop_browser.settings import settings
+
+    monkeypatch.setattr(settings, "profiles_dir", tmp_path)
+    write_control_owner("user-1", "user")
+    instance = daemon.RecordDaemon()
+
+    result = await instance.dispatch({"command": "start", "profile": "user-1"})
+
+    assert result["ok"] is False
+    assert result["code"] == "WRITE_BLOCKED"
+    assert instance.active is None
+
+
 async def test_recording_target_clients_use_the_same_gate(monkeypatch, tmp_path):
     from contextlib import asynccontextmanager
     from unittest.mock import AsyncMock

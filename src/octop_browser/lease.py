@@ -7,6 +7,7 @@ import hashlib
 import importlib
 import json
 import os
+import tempfile
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -19,9 +20,11 @@ from octop_browser.settings import settings as browser_settings
 
 
 class BrowserLeaseError(RuntimeError):
-    """Raised when another process keeps the profile write lease."""
+    """Raised when profile write coordination rejects an operation."""
 
-    code = "WRITE_LOCKED"
+    def __init__(self, message: str, *, code: str = "WRITE_LOCKED") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 def lease_path(profile: str, *, profiles_dir: Path | None = None) -> Path:
@@ -111,6 +114,78 @@ def profile_command_gate(
     @asynccontextmanager
     async def gate(_method: str, _params: dict[str, Any]) -> AsyncIterator[None]:
         async with profile_lease(profile, profiles_dir=profiles_dir):
+            yield
+
+    return gate
+
+
+def control_owner_path(profile: str, *, profiles_dir: Path | None = None) -> Path:
+    return lease_path(profile, profiles_dir=profiles_dir).with_suffix(".owner.json")
+
+
+def read_control_owner(profile: str, *, profiles_dir: Path | None = None) -> str:
+    path = control_owner_path(profile, profiles_dir=profiles_dir)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        owner = data.get("owner") if isinstance(data, dict) else None
+        if owner not in {"agent", "user"}:
+            raise ValueError("Unknown control owner")
+        return str(owner)
+    except FileNotFoundError:
+        return "agent"
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        raise BrowserLeaseError(
+            "The browser control state is invalid or unreadable", code="WRITE_BLOCKED"
+        ) from error
+
+
+def write_control_owner(
+    profile: str, owner: str, *, profiles_dir: Path | None = None
+) -> None:
+    if owner not in {"agent", "user"}:
+        raise ValueError("The browser control owner must be 'agent' or 'user'")
+    path = control_owner_path(profile, profiles_dir=profiles_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            json.dump({"owner": owner}, handle, separators=(",", ":"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        temporary = None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def clear_control_owner(profile: str, *, profiles_dir: Path | None = None) -> None:
+    control_owner_path(profile, profiles_dir=profiles_dir).unlink(missing_ok=True)
+
+
+def profile_control_command_gate(
+    profile: str, *, profiles_dir: Path | None = None
+) -> CommandGate:
+    lease_gate = profile_command_gate(profile, profiles_dir=profiles_dir)
+
+    @asynccontextmanager
+    async def gate(method: str, params: dict[str, Any]) -> AsyncIterator[None]:
+        owner = await asyncio.to_thread(
+            read_control_owner, profile, profiles_dir=profiles_dir
+        )
+        if owner == "user":
+            raise BrowserLeaseError(
+                "User control is active; daemon writes are blocked",
+                code="WRITE_BLOCKED",
+            )
+        async with lease_gate(method, params):
             yield
 
     return gate

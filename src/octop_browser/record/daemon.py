@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from octop_browser.cdp.client import CommandGate
-from octop_browser.lease import profile_command_gate
+from octop_browser.lease import profile_control_command_gate, read_control_owner
 from octop_browser.record.models import PrivacySettings
 from octop_browser.record.recorder import RecordController, RecordSession
 from octop_browser.record.settings import settings
@@ -25,7 +25,7 @@ class RecordDaemon:
         command_gate_factory: Callable[[str], CommandGate] | None = None,
     ) -> None:
         self.controller = RecordController(
-            command_gate_factory=command_gate_factory or profile_command_gate
+            command_gate_factory=command_gate_factory or profile_control_command_gate
         )
         self.active: RecordSession | None = None
         self.active_name: str | None = None
@@ -56,13 +56,21 @@ class RecordDaemon:
                     "error": "A recording is already active",
                     "active": self._active_info(),
                 }
+            profile = str(request.get("profile", "default"))
+            owner = await asyncio.to_thread(read_control_owner, profile)
+            if owner == "user":
+                return {
+                    "ok": False,
+                    "code": "WRITE_BLOCKED",
+                    "error": "User control is active; recording cannot start",
+                }
             privacy = PrivacySettings(
                 input_policy=request.get("privacy", "mask-sensitive"),
                 url_query_policy="mask-sensitive",
                 screenshot_policy=request.get("screenshots", "off"),
             )
             session, data = await self.controller.start_in_process(
-                profile=request.get("profile", "default"),
+                profile=profile,
                 privacy=privacy,
                 name=request.get("name"),
             )
