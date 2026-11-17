@@ -12,7 +12,7 @@ import aiohttp
 
 from octop_browser.actions import capture, interact, js_eval
 from octop_browser.actions import navigate as nav_actions
-from octop_browser.cdp.client import CDPClient
+from octop_browser.cdp.client import CDPClient, CommandGate
 from octop_browser.cdp.launcher import get_page_ws_url, launch_or_attach
 from octop_browser.dom.builder import DOMBuilder, DOMLevel
 from octop_browser.dom.refs import RefCache
@@ -33,15 +33,22 @@ _REUSABLE_BLANK_URLS = {"about:blank", "chrome://newtab/", "chrome://newtab"}
 class _InternalCDPSession:
     """Low-level CDP session: owns a CDPClient and RefCache for one page."""
 
-    def __init__(self, profile: Profile, cfg: OctopSettings) -> None:
+    def __init__(
+        self,
+        profile: Profile,
+        cfg: OctopSettings,
+        command_gate: CommandGate | None = None,
+    ) -> None:
         self._profile = profile
         self._cfg = cfg
+        self._command_gate = command_gate
         self._idle_controller: BrowserIdleController | None = idle_controller_for(
             profile, cfg
         )
         self._client = CDPClient(
             timeout=cfg.cdp_timeout,
             activity_tracker=self._idle_controller,
+            command_gate=command_gate,
         )
         self._ref_cache = RefCache()
         self._connected = False
@@ -137,6 +144,7 @@ class _InternalCDPSession:
         self._client = CDPClient(
             timeout=self._cfg.cdp_timeout,
             activity_tracker=self._idle_controller,
+            command_gate=self._command_gate,
         )
         self._ref_cache.invalidate()
         await self._client.connect(str(match["webSocketDebuggerUrl"]))
@@ -204,6 +212,7 @@ class BrowserSession(HooksMixin):
         urls: list[str] | None = None,
         profile_manager: ProfileManager | None = None,
         settings: OctopSettings | None = None,
+        command_gate: CommandGate | None = None,
     ) -> "BrowserSession":
         """Create a new BrowserSession, launching or re-attaching Chrome.
 
@@ -233,7 +242,7 @@ class BrowserSession(HooksMixin):
         else:
             effective_mode = normalize_mode(mode) if mode else cfg.browser_mode
             is_headless = resolve_headless(effective_mode)
-        internal = _InternalCDPSession(p, cfg)
+        internal = _InternalCDPSession(p, cfg, command_gate)
         await internal.connect(headless=is_headless)
         session = cls(internal, profile)
 

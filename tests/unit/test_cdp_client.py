@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
@@ -32,6 +33,30 @@ class FakeSocket:
                 yield json.dumps(event)
 
         return iterate()
+
+
+async def test_command_gate_wraps_each_cdp_command() -> None:
+    events: list[str] = []
+
+    @asynccontextmanager
+    async def gate(method: str, params: dict[str, Any]):
+        events.append(f"enter:{method}")
+        yield
+        events.append(f"exit:{method}")
+
+    client = CDPClient(command_gate=gate)
+    socket = FakeSocket(client)
+    client._ws = socket  # noqa: SLF001
+
+    await client.send("Runtime.evaluate", {"expression": "1"})
+    await client.with_session("frame-session").send("DOM.getDocument")
+
+    assert events == [
+        "enter:Runtime.evaluate",
+        "exit:Runtime.evaluate",
+        "enter:DOM.getDocument",
+        "exit:DOM.getDocument",
+    ]
 
 
 async def test_scoped_client_pins_commands_and_detach_to_one_session() -> None:

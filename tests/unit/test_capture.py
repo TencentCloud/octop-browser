@@ -84,3 +84,61 @@ def test_apply_viewport_sends_setdevicemetricsoverride(tmp_path: Path):
             },
         )
     ]
+
+
+async def test_switch_target_preserves_command_gate(tmp_path: Path, monkeypatch):
+    from contextlib import asynccontextmanager
+
+    import octop_browser.session as session_module
+    from octop_browser.profile import Profile
+    from octop_browser.session import _InternalCDPSession
+    from octop_browser.settings import OctopSettings
+
+    @asynccontextmanager
+    async def gate(method: str, params: dict):
+        yield
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            self.command_gate = kwargs.get("command_gate")
+
+        async def send(self, *args, **kwargs) -> dict:
+            return {}
+
+        async def close(self) -> None:
+            return
+
+        async def connect(self, ws_url: str) -> None:
+            return
+
+        async def enable_domain(self, domain: str) -> None:
+            return
+
+    class FakeResponse:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args) -> None:
+            return
+
+        async def json(self, content_type=None) -> list[dict]:
+            return [{"type": "page", "id": "next", "webSocketDebuggerUrl": "ws://next"}]
+
+    class FakeHttp:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args) -> None:
+            return
+
+        def get(self, url: str) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr(session_module, "CDPClient", FakeClient)
+    monkeypatch.setattr(session_module.aiohttp, "ClientSession", FakeHttp)
+    profile = Profile(name="test", data_dir=tmp_path, cdp_port=9222)
+    internal = _InternalCDPSession(profile, OctopSettings(), command_gate=gate)
+    original = internal.client
+    await internal.switch_to_target("next", activate=False)
+    assert original.command_gate is gate
+    assert internal.client.command_gate is gate

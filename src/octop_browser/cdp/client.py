@@ -6,12 +6,15 @@ import asyncio
 import json
 import logging
 from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from typing import Any, Protocol
 
 import websockets
 from websockets.asyncio.client import ClientConnection
 
 from octop_browser.settings import settings as _settings
+
+CommandGate = Callable[[str, dict[str, Any]], AbstractAsyncContextManager[None]]
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +47,11 @@ class CDPClient:
         timeout: float | None = None,
         *,
         activity_tracker: ActivityTracker | None = None,
+        command_gate: CommandGate | None = None,
     ) -> None:
         self._timeout = timeout if timeout is not None else _settings.cdp_timeout
         self._activity_tracker = activity_tracker
+        self._command_gate = command_gate
         self._ws: ClientConnection | None = None
         self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
         self._listeners: dict[str, list[Callable[..., Any]]] = {}
@@ -81,6 +86,23 @@ class CDPClient:
         session_id: str | None = None,
     ) -> dict[str, Any]:
         """Send a CDP command and await its response."""
+        if self._command_gate is not None:
+            async with self._command_gate(method, params or {}):
+                return await self._send(
+                    method, params, track_activity=track_activity, session_id=session_id
+                )
+        return await self._send(
+            method, params, track_activity=track_activity, session_id=session_id
+        )
+
+    async def _send(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        track_activity: bool = True,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
         if self._ws is None:
             raise CDPSessionError("Not connected")
         tracker = self._activity_tracker if track_activity else None
