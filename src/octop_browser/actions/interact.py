@@ -114,19 +114,27 @@ async def scroll(
     ref_cache: RefCache,
     direction: str = "down",
     amount: int = 300,
+    ref: str | None = None,
 ) -> ToolResult:
-    """Scroll the page in a direction by pixel amount."""
+    """Scroll at a referenced element, or at the legacy viewport position."""
     start = time.monotonic()
-    delta_y = amount if direction == "down" else -amount
+    delta_y = amount if direction == "down" else (-amount if direction == "up" else 0)
     delta_x = (
         amount if direction == "right" else (-amount if direction == "left" else 0)
     )
+    if ref is None:
+        x, y = 400.0, 300.0
+    else:
+        node_id = ref_cache.lookup(ref)
+        if node_id is None:
+            raise CDPSessionError(f"Ref '{ref}' not found. Call dom_tree() first.")
+        x, y = await _get_center(client, node_id)
     await client.send(
         "Input.dispatchMouseEvent",
         {
             "type": "mouseWheel",
-            "x": 400,
-            "y": 300,
+            "x": x,
+            "y": y,
             "deltaX": delta_x,
             "deltaY": delta_y,
         },

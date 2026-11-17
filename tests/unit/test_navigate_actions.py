@@ -109,3 +109,29 @@ async def test_navigate_does_not_wait_thirty_seconds_when_load_event_is_missing(
     assert result.success is True
     assert observed_timeout is not None
     assert observed_timeout <= 10.0
+
+
+@pytest.mark.asyncio
+async def test_scroll_uses_the_referenced_element_center() -> None:
+    from octop_browser.actions.interact import scroll
+    from octop_browser.dom.refs import RefCache
+
+    client = FakeClient({"model": {"content": [10, 20, 30, 20, 30, 40, 10, 40]}})
+    refs = RefCache()
+    refs.store("region", 42)
+    result = await scroll(client, refs, direction="left", ref="region")
+
+    assert result.success is True
+    assert client.sent == [
+        ("DOM.getBoxModel", {"nodeId": 42}),
+        (
+            "Input.dispatchMouseEvent",
+            {
+                "type": "mouseWheel",
+                "x": 20,
+                "y": 30,
+                "deltaX": -300,
+                "deltaY": 0,
+            },
+        ),
+    ]
