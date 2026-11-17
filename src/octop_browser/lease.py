@@ -10,6 +10,7 @@ import os
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, cast
 
@@ -55,11 +56,19 @@ def _unlock(handle: Any) -> None:
         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+_HELD_LEASES: ContextVar[frozenset[Path]] = ContextVar(
+    "octop_browser_held_leases", default=frozenset()
+)
+
+
 @asynccontextmanager
 async def profile_lease(
     profile: str, *, profiles_dir: Path | None = None
 ) -> AsyncIterator[None]:
     path = lease_path(profile, profiles_dir=profiles_dir)
+    if path in _HELD_LEASES.get():
+        yield
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a+b") as handle:
         deadline = time.monotonic() + 10.0
@@ -87,7 +96,11 @@ async def profile_lease(
                 ).encode("utf-8")
             )
             handle.flush()
-            yield
+            token = _HELD_LEASES.set(_HELD_LEASES.get() | {path})
+            try:
+                yield
+            finally:
+                _HELD_LEASES.reset(token)
         finally:
             _unlock(handle)
 

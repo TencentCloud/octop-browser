@@ -18,6 +18,13 @@ logger = logging.getLogger(__name__)
 _registry: dict[str, BrowserSession] = {}
 _global_hooks: dict[str, list[Any]] = {}
 _command_gate_factory: Callable[[str], CommandGate] | None = None
+_write_gate_factory: Callable[[str], bool] | None = None
+
+
+def configure_browser_write_gate(factory: Callable[[str], bool] | None) -> None:
+    """Set the optional host predicate that allows writes for a profile."""
+    global _write_gate_factory
+    _write_gate_factory = factory
 
 
 def configure_browser_command_gate(
@@ -146,6 +153,16 @@ async def browser_tool(
     if action not in _KNOWN_ACTIONS:
         return _error_result(
             action, f"Unknown action '{action}'. Valid: {sorted(_KNOWN_ACTIONS)}"
+        )
+    if (
+        action not in {"dom_tree", "list_tabs", "screenshot", "wait"}
+        and _write_gate_factory is not None
+        and not _write_gate_factory(profile)
+    ):
+        return _error_result(
+            action,
+            "WRITE_BLOCKED: User control is active; "
+            "return control before browser writes",
         )
 
     if action == "close_session":

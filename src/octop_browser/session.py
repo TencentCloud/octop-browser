@@ -111,14 +111,16 @@ class _InternalCDPSession:
             logger.debug("setDeviceMetricsOverride failed", exc_info=True)
 
     async def switch_to_target(self, target_id: str, *, activate: bool = True) -> None:
-        """Reconnect this session to another page target.
+        """Reconnect this session to another page target under one write transaction."""
+        if self._command_gate is None:
+            await self._switch_to_target(target_id, activate=activate)
+            return
+        async with self._command_gate(
+            "BrowserSession.switch_to_target", {"targetId": target_id}
+        ):
+            await self._switch_to_target(target_id, activate=activate)
 
-        ``Target.activateTarget`` alone only focuses the Chrome tab; a CDP
-        WebSocket remains bound to the old page. CLI calls and replay both
-        expect subsequent actions after ``new_tab`` / ``switch_tab`` to address
-        the selected tab, so we reconnect the page-level CDP client and persist
-        the chosen target id on the profile.
-        """
+    async def _switch_to_target(self, target_id: str, *, activate: bool) -> None:
         if self._cfg.cdp_ws_url:
             raise RuntimeError(
                 "Cannot switch tabs when connected via BROWSER_USE_CDP_WS_URL"

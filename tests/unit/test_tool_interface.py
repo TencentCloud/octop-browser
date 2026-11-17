@@ -830,3 +830,40 @@ async def test_configured_gate_rejects_an_uncoordinated_existing_session():
 
     assert result.success is False
     assert "no command gate" in (result.error or "")
+
+
+async def test_host_write_gate_rejects_writes_without_opening_a_session(monkeypatch):
+    from octop_browser import tool_interface as tool_interface_mod
+
+    get_session = AsyncMock()
+    monkeypatch.setattr(tool_interface_mod, "_get_or_create_session", get_session)
+    tool_interface_mod.configure_browser_write_gate(lambda _profile: False)
+    try:
+        result = await browser_tool(
+            action="eval_js", profile="_test_write_gate_", expression="1"
+        )
+    finally:
+        tool_interface_mod.configure_browser_write_gate(None)
+
+    assert result.success is False
+    assert (result.error or "").startswith("WRITE_BLOCKED:")
+    get_session.assert_not_awaited()
+
+
+async def test_host_write_gate_still_allows_reads(monkeypatch):
+    from octop_browser import tool_interface as tool_interface_mod
+
+    session = SimpleNamespace(
+        dom_tree=AsyncMock(return_value=make_tool_result("dom_tree"))
+    )
+    monkeypatch.setattr(
+        tool_interface_mod, "_get_or_create_session", AsyncMock(return_value=session)
+    )
+    tool_interface_mod.configure_browser_write_gate(lambda _profile: False)
+    try:
+        result = await browser_tool(action="dom_tree", profile="_test_write_gate_read_")
+    finally:
+        tool_interface_mod.configure_browser_write_gate(None)
+
+    assert result.success is True
+    session.dom_tree.assert_awaited_once_with()

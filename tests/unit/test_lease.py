@@ -24,6 +24,26 @@ async def test_gate_uses_the_shared_profile_path(tmp_path: Path) -> None:
         assert json.loads(path.read_text(encoding="utf-8"))["profile"] == "user-1"
 
 
+async def test_nested_lease_in_the_same_task_locks_only_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from octop_browser import lease as lease_module
+
+    lock_count = 0
+    original_lock = lease_module._lock
+
+    def counted_lock(handle: object) -> None:
+        nonlocal lock_count
+        lock_count += 1
+        original_lock(handle)
+
+    monkeypatch.setattr(lease_module, "_lock", counted_lock)
+    async with profile_lease("user-1", profiles_dir=tmp_path):
+        async with profile_lease("user-1", profiles_dir=tmp_path):
+            assert lock_count == 1
+    assert lock_count == 1
+
+
 async def test_two_writers_cannot_overlap(tmp_path: Path) -> None:
     active = False
 

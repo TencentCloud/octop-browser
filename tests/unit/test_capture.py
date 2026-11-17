@@ -94,9 +94,13 @@ async def test_switch_target_preserves_command_gate(tmp_path: Path, monkeypatch)
     from octop_browser.session import _InternalCDPSession
     from octop_browser.settings import OctopSettings
 
+    events: list[str] = []
+
     @asynccontextmanager
     async def gate(method: str, params: dict):
+        events.append(f"enter:{method}")
         yield
+        events.append(f"exit:{method}")
 
     class FakeClient:
         def __init__(self, *args, **kwargs) -> None:
@@ -106,10 +110,10 @@ async def test_switch_target_preserves_command_gate(tmp_path: Path, monkeypatch)
             return {}
 
         async def close(self) -> None:
-            return
+            events.append("close")
 
         async def connect(self, ws_url: str) -> None:
-            return
+            events.append("connect")
 
         async def enable_domain(self, domain: str) -> None:
             return
@@ -122,6 +126,7 @@ async def test_switch_target_preserves_command_gate(tmp_path: Path, monkeypatch)
             return
 
         async def json(self, content_type=None) -> list[dict]:
+            events.append("http")
             return [{"type": "page", "id": "next", "webSocketDebuggerUrl": "ws://next"}]
 
     class FakeHttp:
@@ -142,6 +147,13 @@ async def test_switch_target_preserves_command_gate(tmp_path: Path, monkeypatch)
     await internal.switch_to_target("next", activate=False)
     assert original.command_gate is gate
     assert internal.client.command_gate is gate
+    assert events == [
+        "enter:BrowserSession.switch_to_target",
+        "http",
+        "close",
+        "connect",
+        "exit:BrowserSession.switch_to_target",
+    ]
 
 
 async def test_connect_gate_covers_launch_and_websocket_without_nesting(
