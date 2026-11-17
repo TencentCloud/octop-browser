@@ -78,6 +78,7 @@ class CDPClient:
         params: dict[str, Any] | None = None,
         *,
         track_activity: bool = True,
+        session_id: str | None = None,
     ) -> dict[str, Any]:
         """Send a CDP command and await its response."""
         if self._ws is None:
@@ -88,9 +89,14 @@ class CDPClient:
         try:
             self._id += 1
             msg_id = self._id
-            payload = json.dumps(
-                {"id": msg_id, "method": method, "params": params or {}}
-            )
+            message: dict[str, Any] = {
+                "id": msg_id,
+                "method": method,
+                "params": params or {},
+            }
+            if session_id is not None:
+                message["sessionId"] = session_id
+            payload = json.dumps(message)
             loop = asyncio.get_event_loop()
             future: asyncio.Future[dict[str, Any]] = loop.create_future()
             self._pending[msg_id] = future
@@ -116,14 +122,25 @@ class CDPClient:
         return inner
 
     async def send_passive(
-        self, method: str, params: dict[str, Any] | None = None
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        session_id: str | None = None,
     ) -> dict[str, Any]:
         """Send a health/status probe without extending the idle deadline."""
-        return await self.send(method, params, track_activity=False)
+        return await self.send(
+            method, params, track_activity=False, session_id=session_id
+        )
 
-    async def enable_domain(self, domain: str) -> None:
+    def with_session(self, session_id: str) -> SessionScopedCDPClient:
+        return SessionScopedCDPClient(self, session_id)
+
+    async def enable_domain(
+        self, domain: str, *, session_id: str | None = None
+    ) -> None:
         """Enable a CDP domain (e.g. 'DOM', 'Page', 'Input')."""
-        await self.send(f"{domain}.enable")
+        await self.send(f"{domain}.enable", session_id=session_id)
 
     def on(self, event: str, callback: Callable[..., Any]) -> None:
         """Register a listener for a CDP event."""
@@ -164,6 +181,8 @@ class CDPClient:
                     method: str = msg["method"]
                     params: dict[str, Any] = msg.get("params", {})
                     callback_params = dict(params)
+                    if "sessionId" in msg:
+                        callback_params["sessionId"] = msg["sessionId"]
                     callback_params["__client"] = self
                     for cb in self._listeners.get(method, []):
                         result = cb(callback_params)
@@ -175,3 +194,66 @@ class CDPClient:
                 if not future.done():
                     future.set_exception(CDPSessionError(f"Connection lost: {exc}"))
             self._pending.clear()
+
+
+class SessionScopedCDPClient(CDPClient):
+    """Route commands to one attached target without owning its connection."""
+
+    def __init__(self, parent: CDPClient, session_id: str) -> None:
+        if not session_id:
+            raise ValueError("A non-empty CDP session ID is required")
+        self._parent = parent
+        self.session_id = session_id
+
+    async def send(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        track_activity: bool = True,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        if session_id is not None and session_id != self.session_id:
+            raise CDPSessionError("A scoped client cannot switch CDP sessions")
+        return await self._parent.send(
+            method,
+            params,
+            track_activity=track_activity,
+            session_id=self.session_id,
+        )
+
+    async def send_passive(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        if session_id is not None and session_id != self.session_id:
+            raise CDPSessionError("A scoped client cannot switch CDP sessions")
+        return await self._parent.send_passive(
+            method, params, session_id=self.session_id
+        )
+
+    def with_session(self, session_id: str) -> SessionScopedCDPClient:
+        if session_id != self.session_id:
+            raise CDPSessionError("A scoped client cannot switch CDP sessions")
+        return self
+
+    async def enable_domain(
+        self, domain: str, *, session_id: str | None = None
+    ) -> None:
+        if session_id is not None and session_id != self.session_id:
+            raise CDPSessionError("A scoped client cannot switch CDP sessions")
+        await self._parent.enable_domain(domain, session_id=self.session_id)
+
+    def on(self, event: str, callback: Callable[..., Any]) -> None:
+        self._parent.on(event, callback)
+
+    def off(self, event: str, callback: Callable[..., Any]) -> None:
+        self._parent.off(event, callback)
+
+    async def close(self) -> None:
+        await self._parent.send(
+            "Target.detachFromTarget", {"sessionId": self.session_id}
+        )
