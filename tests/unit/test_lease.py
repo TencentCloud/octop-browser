@@ -44,6 +44,30 @@ async def test_nested_lease_in_the_same_task_locks_only_once(
     assert lock_count == 1
 
 
+async def test_reentrancy_does_not_leak_to_an_independent_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from contextvars import Context
+
+    from octop_browser import lease as lease_module
+
+    now = [0.0]
+    monkeypatch.setattr(lease_module.time, "monotonic", lambda: now[0])
+
+    async def advance(_seconds: float) -> None:
+        now[0] += 11.0
+
+    async def compete() -> None:
+        async with profile_lease("user-1", profiles_dir=tmp_path):
+            pass
+
+    monkeypatch.setattr(lease_module.asyncio, "sleep", advance)
+    async with profile_lease("user-1", profiles_dir=tmp_path):
+        with pytest.raises(BrowserLeaseError) as error:
+            await Context().run(asyncio.create_task, compete())
+    assert error.value.code == "WRITE_LOCKED"
+
+
 async def test_two_writers_cannot_overlap(tmp_path: Path) -> None:
     active = False
 
