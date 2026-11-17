@@ -7,17 +7,26 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from octop_browser.cdp.client import CommandGate
+from octop_browser.lease import profile_command_gate
 from octop_browser.record.models import PrivacySettings
 from octop_browser.record.recorder import RecordController, RecordSession
 from octop_browser.record.settings import settings
 
 
 class RecordDaemon:
-    def __init__(self) -> None:
-        self.controller = RecordController()
+    def __init__(
+        self,
+        *,
+        command_gate_factory: Callable[[str], CommandGate] | None = None,
+    ) -> None:
+        self.controller = RecordController(
+            command_gate_factory=command_gate_factory or profile_command_gate
+        )
         self.active: RecordSession | None = None
         self.active_name: str | None = None
         self.server: asyncio.AbstractServer | None = None

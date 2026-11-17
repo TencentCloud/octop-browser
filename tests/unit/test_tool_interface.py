@@ -777,3 +777,56 @@ async def test_close_session_kill_pops_registry_before_close():
     assert result.success is True
     assert events == ["close:True"]
     assert profile not in tool_interface_mod._registry
+
+
+async def test_configured_gate_is_used_for_browser_session_creation(monkeypatch):
+    from octop_browser import tool_interface as tool_interface_mod
+
+    profile = "_test_configured_gate_"
+    gate = object()
+    captured: dict[str, object] = {}
+
+    class FakeSession:
+        _internal = SimpleNamespace(_command_gate=gate)
+
+        async def navigate(self, url: str) -> ToolResult:
+            captured["url"] = url
+            return make_tool_result("navigate")
+
+    async def create(**kwargs):
+        captured.update(kwargs)
+        return FakeSession()
+
+    monkeypatch.setattr(tool_interface_mod.BrowserSession, "create", create)
+    tool_interface_mod.configure_browser_command_gate(lambda _profile: gate)
+    try:
+        result = await browser_tool(
+            action="navigate", profile=profile, url="https://example.test"
+        )
+    finally:
+        tool_interface_mod.configure_browser_command_gate(None)
+        tool_interface_mod._registry.pop(profile, None)
+
+    assert result.success is True
+    assert captured["command_gate"] is gate
+    assert captured["url"] == "https://example.test"
+
+
+async def test_configured_gate_rejects_an_uncoordinated_existing_session():
+    from octop_browser import tool_interface as tool_interface_mod
+
+    profile = "_test_uncoordinated_existing_"
+    tool_interface_mod._registry[profile] = SimpleNamespace(
+        _internal=SimpleNamespace(_command_gate=None)
+    )
+    tool_interface_mod.configure_browser_command_gate(lambda _profile: object())
+    try:
+        result = await browser_tool(
+            action="navigate", profile=profile, url="https://example.test"
+        )
+    finally:
+        tool_interface_mod.configure_browser_command_gate(None)
+        tool_interface_mod._registry.pop(profile, None)
+
+    assert result.success is False
+    assert "no command gate" in (result.error or "")

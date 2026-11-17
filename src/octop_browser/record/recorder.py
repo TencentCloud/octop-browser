@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+from collections.abc import Callable
 from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,7 +18,7 @@ from typing import Any
 
 import aiohttp
 
-from octop_browser.cdp.client import CDPClient
+from octop_browser.cdp.client import CDPClient, CommandGate
 from octop_browser.cdp.launcher import get_page_ws_url, launch_or_attach
 from octop_browser.mode import resolve_headless
 from octop_browser.profile import Profile, ProfileManager
@@ -61,10 +62,12 @@ class RecordSession:
         cdp_host: str | None = None,
         cdp_port: int | None = None,
         initial_target_id: str | None = None,
+        command_gate: CommandGate | None = None,
     ) -> None:
         self.client = client
         self.store = store
         self.manifest = manifest
+        self._command_gate = command_gate
         self.rr_settings = rr_settings or default_settings
         self.cdp_host = cdp_host
         self.cdp_port = cdp_port
@@ -196,9 +199,16 @@ class RecordSession:
             ws_url = str(target.get("webSocketDebuggerUrl") or "")
             if not target_id or not ws_url or target_id in self._clients:
                 continue
-            client = CDPClient(timeout=browser_settings.cdp_timeout)
+            client = CDPClient(
+                timeout=browser_settings.cdp_timeout,
+                command_gate=self._command_gate,
+            )
             try:
-                await client.connect(ws_url)
+                if self._command_gate is None:
+                    await client.connect(ws_url)
+                else:
+                    async with self._command_gate("RecordSession.connect", {}):
+                        await client.connect(ws_url)
                 await self._install_on_client(client, target_id)
             except Exception:  # pylint: disable=broad-except
                 with suppress(Exception):
@@ -307,6 +317,7 @@ class RecordController:
         store: RecordingStore | None = None,
         settings: OctopSettings | None = None,
         profile_manager: ProfileManager | None = None,
+        command_gate_factory: Callable[[str], CommandGate] | None = None,
     ) -> None:
         """Create a controller.
 
@@ -316,6 +327,8 @@ class RecordController:
                 to the process-wide singleton.
             profile_manager: Profile manager to resolve the CDP port from.
                 Defaults to one derived from ``settings``.
+            command_gate_factory: Optional per-profile CDP/lifecycle gate. The
+                daemon supplies this to coordinate with other profile writers.
 
         Passing ``settings``/``profile_manager`` is what lets a caller record
         inside a browser it launched itself: without them the controller would
@@ -327,16 +340,29 @@ class RecordController:
         self._profile_manager = profile_manager or ProfileManager(
             settings=self._settings
         )
+        self._command_gate_factory = command_gate_factory
+
+    def _gate(self, profile: str) -> CommandGate | None:
+        if self._command_gate_factory is None:
+            return None
+        return self._command_gate_factory(profile)
 
     async def _attach(self, profile: str) -> tuple[Profile, str]:
         """Resolve the profile and a page-level websocket URL to record."""
         p = self._profile_manager.get_or_create(profile)
         if self._settings.cdp_ws_url:
             return p, self._settings.cdp_ws_url
-        await launch_or_attach(
-            p, headless=resolve_headless(self._settings.browser_mode)
-        )
-        return p, await get_page_ws_url(p.cdp_port, profile=p)
+        gate = self._gate(profile)
+        if gate is None:
+            await launch_or_attach(
+                p, headless=resolve_headless(self._settings.browser_mode)
+            )
+            return p, await get_page_ws_url(p.cdp_port, profile=p)
+        async with gate("RecordController.attach", {}):
+            await launch_or_attach(
+                p, headless=resolve_headless(self._settings.browser_mode)
+            )
+            return p, await get_page_ws_url(p.cdp_port, profile=p)
 
     async def doctor(self, profile: str = "default") -> dict[str, Any]:
         p, ws_url = await self._attach(profile)
@@ -354,8 +380,13 @@ class RecordController:
         name: str | None = None,
     ) -> tuple[RecordSession, dict[str, Any]]:
         p, ws_url = await self._attach(profile)
-        client = CDPClient(timeout=self._settings.cdp_timeout)
-        await client.connect(ws_url)
+        gate = self._gate(profile)
+        client = CDPClient(timeout=self._settings.cdp_timeout, command_gate=gate)
+        if gate is None:
+            await client.connect(ws_url)
+        else:
+            async with gate("RecordController.connect", {}):
+                await client.connect(ws_url)
         info = await client.send(
             "Runtime.evaluate",
             {
@@ -384,6 +415,7 @@ class RecordController:
             cdp_host=self._settings.cdp_host if not self._settings.cdp_ws_url else None,
             cdp_port=p.cdp_port if not self._settings.cdp_ws_url else None,
             initial_target_id=initial_target_id,
+            command_gate=gate,
         )
         await session.start()
         return session, {

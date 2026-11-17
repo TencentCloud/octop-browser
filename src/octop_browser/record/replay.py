@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -19,8 +20,19 @@ def _now() -> str:
 
 
 class ReplayRunner:
-    def __init__(self, store: RecordingStore | None = None) -> None:
+    def __init__(
+        self,
+        store: RecordingStore | None = None,
+        *,
+        executor: Callable[..., Awaitable[Any]] | None = None,
+    ) -> None:
         self.store = store or RecordingStore()
+        self._executor = executor
+
+    async def _browser_action(self, action: str, **kwargs: Any) -> Any:
+        if self._executor is not None:
+            return await self._executor(action=action, **kwargs)
+        return await browser_tool(action, **kwargs)
 
     async def run(
         self,
@@ -53,7 +65,9 @@ class ReplayRunner:
                 if step.kind == "open" and step.url:
                     recorded_target_id = self._step_target_id(step)
                     url = self._resolve_url(step.url, values)
-                    res = await browser_tool("navigate", profile=profile, url=url)
+                    res = await self._browser_action(
+                        "navigate", profile=profile, url=url
+                    )
                     entry.update(
                         {
                             "status": "passed" if res.success else "failed",
@@ -65,7 +79,7 @@ class ReplayRunner:
                         current_recorded_target = recorded_target_id
                 elif step.kind == "new_tab" and step.url:
                     url = self._resolve_url(step.url, values)
-                    res = await browser_tool(
+                    res = await self._browser_action(
                         "new_tab", profile=profile, url=url, force_new=True
                     )
                     new_tab_id = str(res.content) if res.success and res.content else ""
@@ -109,7 +123,7 @@ class ReplayRunner:
                         current_recorded_target = (
                             self._step_target_id(step) or current_recorded_target
                         )
-                    dom = await browser_tool(
+                    dom = await self._browser_action(
                         "dom_tree", profile=profile, level="structured"
                     )
                     if not dom.success or not isinstance(dom.content, str):
@@ -117,15 +131,17 @@ class ReplayRunner:
                     ref, matched_by = match_target(step.target, dom.content)
                     if ref:
                         if step.kind == "click":
-                            res = await browser_tool("click", profile=profile, ref=ref)
+                            res = await self._browser_action(
+                                "click", profile=profile, ref=ref
+                            )
                         elif step.kind == "fill":
                             text = self._resolve_value(step.value or "", values)
-                            res = await browser_tool(
+                            res = await self._browser_action(
                                 "fill", profile=profile, ref=ref, text=text
                             )
                         elif step.kind == "select":
                             value = self._resolve_value(step.value or "", values)
-                            res = await browser_tool(
+                            res = await self._browser_action(
                                 "select", profile=profile, ref=ref, value=value
                             )
                         else:
@@ -136,7 +152,7 @@ class ReplayRunner:
                                 res, matched_by = fallback
                             else:
                                 desired = self._resolve_checked(step.value)
-                                res = await browser_tool(
+                                res = await self._browser_action(
                                     "eval_js",
                                     profile=profile,
                                     expression=self._set_checked_by_ref_js(
@@ -187,7 +203,7 @@ class ReplayRunner:
                             }
                         )
                     if step.expect and step.expect.get("urlContains"):
-                        wait = await browser_tool(
+                        wait = await self._browser_action(
                             "wait",
                             profile=profile,
                             url_contains=str(step.expect["urlContains"]),
@@ -198,7 +214,9 @@ class ReplayRunner:
                             entry["status"] = "failed"
                             entry["error"] = wait.error
                 elif step.kind == "press" and step.key:
-                    res = await browser_tool("press", profile=profile, key=step.key)
+                    res = await self._browser_action(
+                        "press", profile=profile, key=step.key
+                    )
                     entry.update(
                         {
                             "status": "passed" if res.success else "failed",
@@ -222,7 +240,7 @@ class ReplayRunner:
                         target_map.get(target_id, target_id) if target_id else ""
                     )
                     if runtime_target_id:
-                        switched = await browser_tool(
+                        switched = await self._browser_action(
                             "switch_tab", profile=profile, tab_id=runtime_target_id
                         )
                         entry["switchTab"] = switched.success
@@ -230,7 +248,9 @@ class ReplayRunner:
                             current_recorded_target = (
                                 target_id or current_recorded_target
                             )
-                    res = await browser_tool("navigate", profile=profile, url=url)
+                    res = await self._browser_action(
+                        "navigate", profile=profile, url=url
+                    )
                     entry.update(
                         {
                             "status": "passed" if res.success else "failed",
@@ -256,7 +276,7 @@ class ReplayRunner:
                         f"window.scrollTo({x}, {y});"
                         f" JSON.stringify({{x: window.scrollX, y: window.scrollY}})"
                     )
-                    res = await browser_tool(
+                    res = await self._browser_action(
                         "eval_js", profile=profile, expression=scroll_expr
                     )
                     entry.update(
@@ -322,7 +342,7 @@ class ReplayRunner:
         # browser focus can drift between CLI calls, user actions, and replay
         # fallback JavaScript. Re-activating the intended tab is cheap and makes
         # multi-tab replay deterministic.
-        return await browser_tool(
+        return await self._browser_action(
             "switch_tab", profile=profile, tab_id=runtime_target_id
         )
 
@@ -339,28 +359,28 @@ class ReplayRunner:
             value = str(item.get("value") or "")
             entry: dict[str, Any] = {"type": typ, "value": value, "status": "running"}
             if typ == "url_contains" and value:
-                res = await browser_tool(
+                res = await self._browser_action(
                     "wait", profile=profile, url_contains=value, timeout_ms=10000
                 )
                 entry.update({"status": "passed" if res.success else "failed"})
                 if res.error:
                     entry["error"] = res.error
             elif typ == "text_contains" and value:
-                res = await browser_tool(
+                res = await self._browser_action(
                     "wait", profile=profile, text=value, timeout_ms=10000
                 )
                 entry.update({"status": "passed" if res.success else "failed"})
                 if res.error:
                     entry["error"] = res.error
             elif typ == "selector_exists" and value:
-                res = await browser_tool(
+                res = await self._browser_action(
                     "wait", profile=profile, selector=value, timeout_ms=10000
                 )
                 entry.update({"status": "passed" if res.success else "failed"})
                 if res.error:
                     entry["error"] = res.error
             elif typ == "title_contains" and value:
-                res = await browser_tool(
+                res = await self._browser_action(
                     "eval_js",
                     profile=profile,
                     expression="document.title.includes("
@@ -373,7 +393,7 @@ class ReplayRunner:
                     entry["error"] = res.error
             elif typ == "element_text_contains" and value and item.get("selector"):
                 selector = str(item.get("selector") or "")
-                res = await browser_tool(
+                res = await self._browser_action(
                     "eval_js",
                     profile=profile,
                     expression=(
@@ -392,7 +412,7 @@ class ReplayRunner:
                     entry["error"] = res.error
             elif typ == "input_value_equals" and item.get("selector"):
                 selector = str(item.get("selector") or "")
-                res = await browser_tool(
+                res = await self._browser_action(
                     "eval_js",
                     profile=profile,
                     expression=(
@@ -443,7 +463,9 @@ class ReplayRunner:
         artifacts["reasonPath"] = str(reason_path)
 
         if dom_content is None:
-            dom = await browser_tool("dom_tree", profile=profile, level="structured")
+            dom = await self._browser_action(
+                "dom_tree", profile=profile, level="structured"
+            )
             if dom.success and isinstance(dom.content, str):
                 dom_content = dom.content
         if dom_content is not None:
@@ -452,7 +474,7 @@ class ReplayRunner:
             artifacts["domSnapshotPath"] = str(dom_path)
 
         screenshot_path = artifact_dir / "screenshot.png"
-        shot = await browser_tool(
+        shot = await self._browser_action(
             "screenshot",
             profile=profile,
             full_page=True,
@@ -484,7 +506,7 @@ class ReplayRunner:
         if selectors or xpath:
             text = self._resolve_value(step.value or "", inputs)
             js = self._selector_xpath_js(step.kind, selectors, str(xpath or ""), text)
-            res = await browser_tool("eval_js", profile=profile, expression=js)
+            res = await self._browser_action("eval_js", profile=profile, expression=js)
             if res.success:
                 return res, "selector/xpath"
 
@@ -492,7 +514,7 @@ class ReplayRunner:
             x = int(float(bbox.get("x", 0)) + float(bbox.get("width", 0)) / 2)
             y = int(float(bbox.get("y", 0)) + float(bbox.get("height", 0)) / 2)
             if x >= 0 and y >= 0:
-                res = await browser_tool("click", profile=profile, x=x, y=y)
+                res = await self._browser_action("click", profile=profile, x=x, y=y)
                 return res, "bbox"
         return None
 

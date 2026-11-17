@@ -492,3 +492,40 @@ async def test_replay_skips_known_transient_auth_and_risk_navigation_steps(
     assert [call for call in calls if call[0] == "navigate"] == [
         ("navigate", {"profile": "demo", "url": "https://www.bilibili.com/"}),
     ]
+
+
+@pytest.mark.asyncio
+async def test_replay_uses_injected_executor_instead_of_default_browser_tool(
+    monkeypatch, tmp_path
+):
+    calls: list[tuple[str, dict]] = []
+
+    async def executor(action: str, **kwargs):
+        calls.append((action, kwargs))
+        return _result(action)
+
+    async def unexpected_default(*args, **kwargs):
+        raise AssertionError("The default browser_tool must not be used")
+
+    monkeypatch.setattr("octop_browser.record.replay.browser_tool", unexpected_default)
+    store = _store_with_steps(
+        tmp_path,
+        "rec_injected_executor",
+        StepsDocument(
+            recordingId="rec_injected_executor",
+            steps=[
+                SemanticStep(
+                    id="step_001", kind="open", url="https://example.test/start"
+                )
+            ],
+        ),
+    )
+
+    report = await ReplayRunner(store, executor=executor).run(
+        "rec_injected_executor", profile="demo"
+    )
+
+    assert report["status"] == "passed"
+    assert calls == [
+        ("navigate", {"profile": "demo", "url": "https://example.test/start"})
+    ]

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
-from octop_browser.cdp.client import CDPSessionError
+from octop_browser.cdp.client import CDPSessionError, CommandGate
 from octop_browser.mode import BrowserMode
 from octop_browser.models import ActionMetrics, ToolResult
 from octop_browser.profile import ProfileManager
@@ -16,6 +17,16 @@ logger = logging.getLogger(__name__)
 
 _registry: dict[str, BrowserSession] = {}
 _global_hooks: dict[str, list[Any]] = {}
+_command_gate_factory: Callable[[str], CommandGate] | None = None
+
+
+def configure_browser_command_gate(
+    factory: Callable[[str], CommandGate] | None,
+) -> None:
+    """Set the optional profile-gate factory used for newly created sessions."""
+    global _command_gate_factory
+    _command_gate_factory = factory
+
 
 _KNOWN_ACTIONS = frozenset(
     [
@@ -60,12 +71,27 @@ async def _get_or_create_session(
     mode: BrowserMode | None = None,
     urls: list[str] | None = None,
 ) -> BrowserSession:
-    if profile not in _registry:
-        sess = await BrowserSession.create(
-            profile=profile, headless=headless, mode=mode, urls=urls
-        )
-        _registry[profile] = sess
-    return _registry[profile]
+    existing = _registry.get(profile)
+    if existing is not None:
+        if (
+            _command_gate_factory is not None
+            and existing._internal._command_gate is None  # noqa: SLF001
+        ):
+            raise RuntimeError(
+                "The existing browser session has no command gate; "
+                "close and recreate it"
+            )
+        return existing
+    gate = _command_gate_factory(profile) if _command_gate_factory is not None else None
+    sess = await BrowserSession.create(
+        profile=profile,
+        headless=headless,
+        mode=mode,
+        urls=urls,
+        command_gate=gate,
+    )
+    _registry[profile] = sess
+    return sess
 
 
 async def _drop_session(profile: str) -> None:
